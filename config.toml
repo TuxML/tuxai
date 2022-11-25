@@ -1,0 +1,35 @@
+[path]
+    dataset = "/data/tuxai/dataset"
+    cache = "/data/tuxai/cache"
+
+[dataframe]
+    targets = [
+        "vmlinux",
+        "GZIP-bzImage", 
+        "GZIP-vmlinux", 
+        "GZIP", 
+        "BZIP2-bzImage", 
+        "BZIP2-vmlinux", 
+        "BZIP2", 
+        "LZMA-bzImage", 
+        "LZMA-vmlinux", 
+        "LZMA", 
+        "XZ-bzImage", 
+        "XZ-vmlinux", 
+        "XZ", 
+        "LZO-bzImage", 
+        "LZO-vmlinux", 
+        "LZO", 
+        "LZ4-bzImage", 
+        "LZ4-vmlinux", 
+        "LZ4"
+    ]
+
+    extras = ["cid", "active_options"]
+
+[log]
+    path = "/data/tuxai/logs/log.txt"
+    terminal_level = "info"
+    file_level = "debug"
+    file_size = 10000000
+    file_count = 3
