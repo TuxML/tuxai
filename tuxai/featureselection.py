@@ -3,7 +3,7 @@ import logging
 from collections import defaultdict
 import pickle
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from pathlib import Path
 import pandas as pd
 
@@ -53,7 +53,7 @@ def options_comparison_matrix(
 
 
 def correlated_features(
-    cols_matrix: dict[str, dict[str, float]], threshold=0.0
+    cols_matrix: dict[str, dict[str, float]], threshold: float = 0.0
 ) -> list[set]:
     """Group same features."""
 
