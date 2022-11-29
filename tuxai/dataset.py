@@ -45,7 +45,7 @@ class Dataset:
         """
         LOG.debug(f"[{self._version}] loading dataframe")
         parquet = (
-            Path(self._config["path"]["dataset"]) / f"dataset_{self._version}.parquet"
+            Path(self._config["dataset"]["path"]) / f"dataset_{self._version}.parquet"
         )
         # parquet not found ?
         # get pkl and convert it for next time
@@ -96,6 +96,9 @@ if __name__ == "__main__":
     LOG.info("log test")
 
     # precompute
-    for ver in (413, 415, 420, 500, 504, 507, 508):
-        dataset = Dataset(ver)
-        dataset.get_dataframe()
+    # for ver in (413, 415, 420, 500, 504, 507, 508):
+    #     dataset = Dataset(ver)
+    #     dataset.get_dataframe()
+
+    dataset = Dataset(413)
+    # dataset.filter_correlated()

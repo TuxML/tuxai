@@ -4,6 +4,8 @@ from pathlib import Path
 import logging
 from logging.handlers import RotatingFileHandler
 
+from diskcache import Cache
+
 import tomli
 
 DEFAULT_CONFIG_FILE = "config.toml"
@@ -14,6 +16,12 @@ def config() -> dict:
     config_path = Path(__file__).resolve().parent.parent / DEFAULT_CONFIG_FILE
     with open(config_path, "rb") as config_file:
         return tomli.load(config_file)
+
+
+def cache() -> Cache:
+    """Get diskcache."""
+    cache_config = config()["diskcache"]
+    return Cache(cache_config["path"], size_limit=int(cache_config["size_limit"]))
 
 
 def config_logger():
@@ -50,6 +58,8 @@ def config_logger():
     file_handler.setFormatter(formatter)
     file_handler.setLevel(getattr(logging, file_level))
     logger.addHandler(file_handler)
+
+    logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
 
 
 if __name__ == "__main__":

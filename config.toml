@@ -1,6 +1,9 @@
-[path]
-    dataset = "/data/tuxai/dataset"
-    cache = "/data/tuxai/cache"
+[dataset]
+    path = "/data/tuxai/dataset"
+
+[diskcache]
+    path = "/data/tuxai/cache"
+    size_limit = 5e9
 
 [dataframe]
     targets = [
