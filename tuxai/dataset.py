@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 
 from tuxai.misc import config, config_logger
+from tuxai.featureselection import Collinearity
 
 LOG = logging.getLogger(__name__)
 
@@ -38,7 +39,13 @@ class Dataset:
         """Get kernel version as a string (read only)."""
         return self._version
 
-    def get_dataframe(self, col_filter: Columns = Columns.all) -> pd.DataFrame:
+    def get_dataframe(
+        self,
+        col_filter: Columns = Columns.all,
+        group_collinear_options: bool = True,
+        collinearity_threshold: float = 0.0,
+        return_collinear_groups: bool = False,
+    ) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, list[str]]]:
         """Get raw Pandas DataFrame.
 
         If parquet file is not found, try with pickle.
@@ -56,20 +63,67 @@ class Dataset:
                 for target in self._config["dataframe"]["targets"]:
                     df[target] /= 1024 * 1024
                     df[target] = df[target].astype("float")
-                for col in tqdm(self._options(df)):
-                    # df[col] = df[col].astype("category")
+                for col in tqdm(self._options(df.columns)):
                     df[col] = df[col].astype("bool")
             df.to_parquet(parquet, engine="pyarrow")
         df = pd.read_parquet(parquet, engine="pyarrow").drop_duplicates()
+        if return_collinear_groups and col_filter in (Columns.targets, Columns.extra):
+            LOG.warning(f"collinearity not supported for col_filter={col_filter.name}")
+
         match col_filter:
             case Columns.all:
-                return df
+                return (
+                    self._group_colinar_options(
+                        dataframe=df,
+                        threshold=collinearity_threshold,
+                        return_groups=return_collinear_groups,
+                    )
+                    if group_collinear_options
+                    else df
+                )
             case Columns.targets:
                 return df[self._config["dataframe"]["targets"]]
             case Columns.extra:
                 return df[self._config["dataframe"]["extras"]]
             case Columns.options:
-                return df[self._options(df.columns)]
+                options = self._options(df.columns)
+                df = df[options]
+                return (
+                    self._group_colinar_options(
+                        dataframe=df,
+                        threshold=collinearity_threshold,
+                        return_groups=return_collinear_groups,
+                    )
+                    if group_collinear_options
+                    else df
+                )
+
+    def _group_colinar_options(
+        self,
+        dataframe: pd.DataFrame,
+        threshold: float,
+        return_groups: bool,
+    ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+        """Return dataframe with grouped options + group details."""
+        # split options from other columns
+        options = self._options(dataframe.columns)
+        not_options = [col for col in dataframe.columns if col not in options]
+        df_options = dataframe[options]
+        df_not_options = dataframe[not_options]
+        # collinearity on options
+        df_options, groups = Collinearity(df_options).group_correlated_features(
+            threshold
+        )
+        # get other columns back
+        df = (
+            df_options
+            if df_not_options.empty
+            else pd.concat([df_options, df_not_options], axis=1)
+        )
+
+        if return_groups:
+            return df, groups
+        return df
 
     def train_test_split(
         self, test_size: float = 0.2, target: str = "vmlinux"
@@ -100,5 +154,6 @@ if __name__ == "__main__":
     #     dataset = Dataset(ver)
     #     dataset.get_dataframe()
 
-    dataset = Dataset(413)
+    df, groups = Dataset(508).get_dataframe(return_collinear_groups=True)
+    print(groups)
     # dataset.filter_correlated()

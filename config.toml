@@ -3,7 +3,7 @@
 
 [diskcache]
     path = "/data/tuxai/cache"
-    size_limit = 5e9
+    size_limit = 20e9
 
 [dataframe]
     targets = [
