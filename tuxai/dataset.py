@@ -32,7 +32,7 @@ class Dataset:
         """Convert version to string (413 == 4.13 == "413" == "4.13")."""
         self._version = str(version).replace(".", "")
         self._config = config()
-        self.collinear_options_ = None
+        self.collinear_options_: dict[str, list[str]] | None = None
 
     @property
     def version(self) -> str:

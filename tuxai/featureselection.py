@@ -9,6 +9,8 @@ from tuxai.misc import config, cache
 
 LOG = logging.getLogger(__name__)
 
+CORR_PREFIX = "CORR|"
+
 
 class Collinearity:
     """Manage groups of colinear options."""
@@ -83,7 +85,7 @@ class Collinearity:
 
         # keep one of each group, drop remaining
         for idx, group in enumerate(self.correlated_features(threshold=threshold)):
-            key = f"CORR|{idx:04}"
+            key = f"{CORR_PREFIX}{idx:04}"
             groups[key] = group
             to_rename[group[0]] = key
             to_drop.extend(group[1:])
