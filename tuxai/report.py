@@ -8,11 +8,12 @@ import seaborn as sns
 import pandas as pd
 
 
-def model_metrics(y_pred: list, y_true: list) -> dict[str, float]:
+def model_metrics(
+    y_pred: list, y_true: list, all_metrics: bool = False
+) -> dict[str, float]:
     """Get some metrics from model prediction."""
-    res = {
-        metric.__name__.replace("_", " "): metric(y_true, y_pred)
-        for metric in (
+    if all_metrics:
+        metrics_list = [
             metrics.explained_variance_score,
             metrics.max_error,
             metrics.mean_absolute_error,
@@ -27,7 +28,12 @@ def model_metrics(y_pred: list, y_true: list) -> dict[str, float]:
             metrics.mean_pinball_loss,
             metrics.d2_pinball_score,
             metrics.d2_absolute_error_score,
-        )
+        ]
+    else:
+        metrics_list = [metrics.mean_absolute_error, metrics.mean_squared_error]
+    res = {
+        metric.__name__.replace("_", " "): metric(y_true, y_pred)
+        for metric in metrics_list
     }
     res["root mean squared error"] = np.sqrt(res["mean squared error"])
     return res

@@ -5,7 +5,6 @@ import pickle
 import logging
 from enum import Enum, unique
 
-
 import pandas as pd
 from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
@@ -33,6 +32,7 @@ class Dataset:
         """Convert version to string (413 == 4.13 == "413" == "4.13")."""
         self._version = str(version).replace(".", "")
         self._config = config()
+        self.collinear_options_ = None
 
     @property
     def version(self) -> str:
@@ -111,9 +111,9 @@ class Dataset:
         df_options = dataframe[options]
         df_not_options = dataframe[not_options]
         # collinearity on options
-        df_options, groups = Collinearity(df_options).group_correlated_features(
-            threshold
-        )
+        df_options, self.collinear_options_ = Collinearity(
+            df_options
+        ).group_correlated_features(threshold)
         # get other columns back
         df = (
             df_options
@@ -122,7 +122,7 @@ class Dataset:
         )
 
         if return_groups:
-            return df, groups
+            return df, self.collinear_options_
         return df
 
     def train_test_split(
@@ -154,6 +154,7 @@ if __name__ == "__main__":
     #     dataset = Dataset(ver)
     #     dataset.get_dataframe()
 
-    df, groups = Dataset(508).get_dataframe(return_collinear_groups=True)
-    print(groups)
+    # df, groups = Dataset(508).get_dataframe(return_collinear_groups=True)
+    Dataset(508).train_test_split()
+    # print(groups)
     # dataset.filter_correlated()
