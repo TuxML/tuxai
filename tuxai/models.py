@@ -10,6 +10,16 @@ from tuxai.featureselection import CORR_PREFIX
 
 LOG = logging.getLogger(__name__)
 
+DEFAULT_XGBOOST_PARAMS = {
+    "alpha": 6,
+    "gamma": 2,
+    "lambda": 2,
+    "max_depth": 6,
+    "learning_rate": 0.1,
+    "n_estimators": 100,
+    "eval_metric": "mape",
+}
+
 
 class XGBoost:
     """Extreme Gradient Boosting."""
@@ -17,7 +27,9 @@ class XGBoost:
     def __init__(self, dataset: Dataset, **kwargs) -> None:
         """Remaining parameters are sent to model constructor."""
         self._dataset = dataset
-        self._xgb_reg = xgb.XGBRegressor(**kwargs)
+        self._xgb_reg = xgb.XGBRegressor(
+            **(DEFAULT_XGBOOST_PARAMS if not kwargs else kwargs)
+        )
 
         # X_train, y_train, X_test, y_test
         self._data_split = dataset.train_test_split()
