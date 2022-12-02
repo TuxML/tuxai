@@ -1,5 +1,7 @@
 """Collection of miscellaneous functions."""
 
+from datetime import datetime
+
 from pathlib import Path
 import logging
 from logging.handlers import RotatingFileHandler
@@ -60,6 +62,13 @@ def config_logger():
     logger.addHandler(file_handler)
 
     logging.getLogger("matplotlib").setLevel(logging.CRITICAL)
+
+
+def date2dir(dt: datetime | None = None, hm: bool = True) -> str:
+    """Generate directory name based on date."""
+    return (datetime.now() if dt is None else dt).strftime(
+        "%Y_%m_%d_%H_%M" if hm else "%Y_%m_%d"
+    )
 
 
 if __name__ == "__main__":

@@ -1,11 +1,23 @@
 """Generate metrics, docs, plots, etc."""
 
+from pathlib import Path
+import logging
+
 import numpy as np
 from sklearn import metrics
 from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 import seaborn as sns
 import pandas as pd
+from tqdm.auto import tqdm
+
+from tuxai.misc import date2dir, config
+from tuxai.dataset import Dataset
+from tuxai.models import XGBoost
+
+LOG = logging.getLogger(__name__)
+
+DEFAULT_REPORT_FILENAME = "report.xlsx"
 
 
 def model_metrics(
@@ -53,3 +65,47 @@ def plot_pred_true(y_pred: pd.Series, y_true: pd.Series) -> Line2D:
     sns.lineplot(df_ap.actual, ax=ax, alpha=0.5, label="actual")
     sns.scatterplot(df_ap.error, ax=ax, s=1, color="r", label="error")
     return fig
+
+
+class Report:
+    """Generate excel report for each version, with different options."""
+
+    def __init__(self, path: str | Path | None = None) -> None:
+        """Provide a path or get generated one."""
+        self._path = (
+            Path(__file__).resolve().parent.parent
+            / "reports"
+            / date2dir()
+            / DEFAULT_REPORT_FILENAME
+        )
+        self._config = config()
+
+    def generate(self):
+        """Create excel file."""
+        LOG.info(f"generating excel report: {self._path}")
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with pd.ExcelWriter(self._path, engine="xlsxwriter") as writer:
+            if self._config["report"]["feature_importance"]:
+                self._feature_importance(writer)
+
+    def _feature_importance(self, writer: pd.ExcelWriter) -> None:
+        """Generate feature importance report."""
+        LOG.info("generating feature importance report")
+        for version in (pbar := tqdm(self._config["report"]["versions"])):
+            pbar.set_description(self._version_str(version))
+            dataset = Dataset(version)
+            xgb = XGBoost(dataset)
+            xgb.fit()
+            df = xgb.options_scores(limit=self._config["report"]["feature_count"])
+            sheet_name = f"({self._version_str(version)}) Feature importance"
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+
+    @staticmethod
+    def _version_str(version: int | str) -> str:
+        """Convert version before displaying."""
+        str_ver = str(version)
+        return f"{str_ver[0]}.{str_ver[1:]}"
+
+
+if __name__ == "__main__":
+    Report().generate()

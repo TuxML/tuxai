@@ -30,6 +30,11 @@
 
     extras = ["cid", "active_options"]
 
+[report]
+    versions = [413, 415, 420, 500, 504, 507, 508]
+    feature_importance = true
+    feature_count = 100
+
 [log]
     path = "/data/tuxai/logs/log.txt"
     terminal_level = "info"

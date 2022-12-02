@@ -2099,10 +2099,18 @@ plotting = ["graphviz", "matplotlib"]
 pyspark = ["cloudpickle", "pyspark", "scikit-learn"]
 scikit-learn = ["scikit-learn"]
 
+[[package]]
+name = "xlsxwriter"
+version = "3.0.3"
+description = "A Python module for creating Excel XLSX files."
+category = "main"
+optional = false
+python-versions = ">=3.4"
+
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10,<=3.10.6"
-content-hash = "f1015f6ea94d6af441c6b6f0f41ff8072a5d572fd3b5f8fa62b845375a6298ac"
+content-hash = "55ced9253ed1aa1964f54ea09a8ce0683c2d335579884b2bb274b3eeb9a08cb9"
 
 [metadata.files]
 absl-py = [
@@ -3613,4 +3621,8 @@ xgboost = [
     {file = "xgboost-1.7.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:e96305eb8c8b6061d83ac9fef25437e8ebc8d9c9300e75b8d07f35de1031166b"},
     {file = "xgboost-1.7.1-py3-none-win_amd64.whl", hash = "sha256:fbe06896e1b12843c7f428ae56da6ac1c5975545d8785f137f73fd591c54e5f5"},
     {file = "xgboost-1.7.1.tar.gz", hash = "sha256:bb302c5c33e14bab94603940987940f29203ecb8767a7a719daf579fbfaace64"},
+]
+xlsxwriter = [
+    {file = "XlsxWriter-3.0.3-py3-none-any.whl", hash = "sha256:df0aefe5137478d206847eccf9f114715e42aaea077e6a48d0e8a2152e983010"},
+    {file = "XlsxWriter-3.0.3.tar.gz", hash = "sha256:e89f4a1d2fa2c9ea15cde77de95cd3fd8b0345d0efb3964623f395c8c4988b7f"},
 ]
