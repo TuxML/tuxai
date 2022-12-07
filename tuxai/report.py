@@ -126,18 +126,17 @@ class Report:
             (False, True) if group_collinear_options else (False,)
         )
         res = list()
-        for version in (pbar := tqdm(versions)):
+        for version in (pbar_0 := tqdm(versions, position=0)):
             dataset = Dataset(version)
-            for target in targets:
+            for target in (pbar_1 := tqdm(targets, position=1, leave=False)):
                 for group_collinear_options in group_collinear_options_list:
                     coll_str = (
                         "with collinearity"
                         if group_collinear_options
                         else "no collinearity"
                     )
-                    pbar.set_description(
-                        f"{self._version_str(version)} - {target} - {coll_str}"
-                    )
+                    pbar_0.set_description(self._version_str(version))
+                    pbar_1.set_description(f"{target} - {coll_str}")
 
                     xgb = XGBoost(
                         dataset=dataset,
