@@ -2,7 +2,6 @@
 
 import logging
 import tempfile
-from cachetools import cached
 from pathlib import Path
 
 import xgboost as xgb
@@ -66,6 +65,7 @@ class XGBoost:
         self._cache = cache() if use_cache else None
 
         self._xgb_reg = xgb.XGBRegressor(random_state=2022, **self._parameters)
+        self._signature = self._get_signature()
 
     def fit(self) -> None:
         """Train model."""
@@ -77,7 +77,7 @@ class XGBoost:
                 self._is_trained = True
                 return
 
-        LOG.info("training model")
+        LOG.info(f"training model {self._signature}")
 
         # fit with sorted options (/ pred)
         self._xgb_reg.fit(
@@ -125,8 +125,7 @@ class XGBoost:
                 )
         return df_scores
 
-    @cached(cache={})
-    def _signature(self) -> str:
+    def _get_signature(self) -> str:
         """Get model signature (training data + parameters)."""
         LOG.debug("computing model signature...")
         param = "|".join(
@@ -148,23 +147,21 @@ class XGBoost:
         """Serialize model in cache."""
         # create temporary file, read content and store in cache
         with tempfile.TemporaryDirectory() as temp_dir:
-            key = self._signature()
-            LOG.debug(f"saving model: {key}")
+            LOG.debug(f"saving model: {self._signature}")
             json_path = Path(temp_dir) / "model.json"
             self._xgb_reg.save_model(json_path)
-            self._cache[key] = json_path.read_text()
+            self._cache[self._signature] = json_path.read_text()
 
     def _load(self) -> bool:
         """Load model from cache."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            key = self._signature()
-            if found := key in self._cache:
-                LOG.debug(f"loading model: {key}")
+            if found := self._signature in self._cache:
+                LOG.debug(f"loading model: {self._signature}")
                 json_path = Path(temp_dir) / "model.json"
-                json_path.write_text(self._cache[key])
+                json_path.write_text(self._cache[self._signature])
                 self._xgb_reg.load_model(json_path)
             else:
-                LOG.debug(f"model not found : {key}")
+                LOG.debug(f"model not found : {self._signature}")
             return found
 
 

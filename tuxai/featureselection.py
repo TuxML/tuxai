@@ -92,7 +92,7 @@ class Collinearity:
 
         self._dataframe = self._dataframe.drop(columns=to_drop)
         self._dataframe = self._dataframe.rename(columns=to_rename)
-        LOG.info(
+        LOG.debug(
             f"collinear options: {len(to_rename)} groups found, {len(to_drop)} columns removed"
         )
         return self._dataframe, groups

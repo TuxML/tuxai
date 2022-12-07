@@ -42,7 +42,12 @@ def model_metrics(
             metrics.d2_absolute_error_score,
         ]
     else:
-        metrics_list = [metrics.mean_absolute_error, metrics.mean_squared_error]
+        metrics_list = [
+            metrics.mean_absolute_error,
+            metrics.mean_absolute_percentage_error,
+            metrics.mean_squared_error,
+            metrics.max_error,
+        ]
     res = {
         metric.__name__.replace("_", " "): metric(y_true, y_pred)
         for metric in metrics_list
@@ -80,19 +85,19 @@ class Report:
         )
         self._config = config()
 
-    def generate(self):
-        """Create excel file."""
-        LOG.info(f"generating excel report: {self._path}")
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with pd.ExcelWriter(self._path, engine="xlsxwriter") as writer:
-            # trained model are stored in cache disk,
-            # so multiple fit call should not be a problem
-            if self._config["report"]["xgboost"]:
-                self._xgboost_model(writer)
-            if self._config["report"]["feature_importance"]:
-                self._feature_importance(writer)
+    # def generate(self):
+    #     """Create excel file."""
+    #     LOG.info(f"generating excel report: {self._path}")
+    #     self._path.parent.mkdir(parents=True, exist_ok=True)
+    #     with pd.ExcelWriter(self._path, engine="xlsxwriter") as writer:
+    #         # trained model are stored in cache disk,
+    #         # so multiple fit call should not be a problem
+    #         if self._config["report"]["xgboost"]:
+    #             self._xgboost_model(writer)
+    #         if self._config["report"]["feature_importance"]:
+    #             self._feature_importance(writer)
 
-    def _feature_importance(self, writer: pd.ExcelWriter) -> None:
+    def feature_importance(self) -> pd.DataFrame:
         """Generate feature importance report."""
         LOG.info("generating feature importance report")
         for version in (pbar := tqdm(self._config["report"]["versions"])):
@@ -100,38 +105,57 @@ class Report:
             dataset = Dataset(version)
             xgb = XGBoost(dataset)
             xgb.fit()
-            df = xgb.options_scores(limit=self._config["report"]["feature_count"])
-            sheet_name = f"({self._version_str(version)}) Feature importance"
-            df.to_excel(writer, index=False, sheet_name=sheet_name)
+            return xgb.options_scores(limit=self._config["report"]["feature_count"])
 
-    def _xgboost_model(self, writer: pd.ExcelWriter) -> None:
-        """Test and generate report for each version."""
+    def xgboost_model(
+        self,
+        versions: list[str] | None = None,
+        targets: list[str] | None = None,
+        group_collinear_options: bool = True,
+    ) -> dict:
+        """Test and generate report for each version/target/options.
+
+        If not specified, get parameters from config file.
+        """
         LOG.info("generating xgboost report")
-        res = dict()
-        for version in (pbar := tqdm(self._config["report"]["versions"])):
-            res[version] = dict()
-            for target in self._config["report"]["xgboost_targets"]:
-                res[version][target] = dict()
-                for group_collinear_options in (True, False):
+        versions = self._config["report"]["versions"] if versions is None else versions
+        targets = (
+            self._config["report"]["xgboost_targets"] if targets is None else targets
+        )
+        group_collinear_options_list = (
+            (False, True) if group_collinear_options else (False,)
+        )
+        res = list()
+        for version in (pbar := tqdm(versions)):
+            dataset = Dataset(version)
+            for target in targets:
+                for group_collinear_options in group_collinear_options_list:
                     coll_str = (
-                        "group collinearity" if group_collinear_options else "raw"
+                        "with collinearity"
+                        if group_collinear_options
+                        else "no collinearity"
                     )
-
                     pbar.set_description(
                         f"{self._version_str(version)} - {target} - {coll_str}"
                     )
-                    dataset = Dataset(version)
+
                     xgb = XGBoost(
                         dataset=dataset,
                         target=target,
                         group_collinear_options=group_collinear_options,
                     )
                     xgb.fit()
-                    res[version][target][coll_str] = model_metrics(
-                        y_pred=xgb.pred(), y_true=xgb.y_test
+                    metrics = model_metrics(y_pred=xgb.pred(), y_true=xgb.y_test)
+                    res.append(
+                        {
+                            "version": self._version_str(version),
+                            "collinearity": group_collinear_options,
+                            "target": target,
+                            **metrics,
+                        }
                     )
         # TODO write res to excel
-        print(res)
+        return pd.DataFrame.from_dict(res)
 
     @staticmethod
     def _version_str(version: int | str) -> str:
@@ -144,4 +168,5 @@ if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    Report().generate()
+    df = Report().xgboost_model()
+    print(df)
