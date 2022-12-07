@@ -85,6 +85,10 @@ class Report:
         LOG.info(f"generating excel report: {self._path}")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with pd.ExcelWriter(self._path, engine="xlsxwriter") as writer:
+            # trained model are stored in cache disk,
+            # so multiple fit call should not be a problem
+            if self._config["report"]["xgboost"]:
+                self._xgboost_model(writer)
             if self._config["report"]["feature_importance"]:
                 self._feature_importance(writer)
 
@@ -100,6 +104,35 @@ class Report:
             sheet_name = f"({self._version_str(version)}) Feature importance"
             df.to_excel(writer, index=False, sheet_name=sheet_name)
 
+    def _xgboost_model(self, writer: pd.ExcelWriter) -> None:
+        """Test and generate report for each version."""
+        LOG.info("generating xgboost report")
+        res = dict()
+        for version in (pbar := tqdm(self._config["report"]["versions"])):
+            res[version] = dict()
+            for target in self._config["report"]["xgboost_targets"]:
+                res[version][target] = dict()
+                for group_collinear_options in (True, False):
+                    coll_str = (
+                        "group collinearity" if group_collinear_options else "raw"
+                    )
+
+                    pbar.set_description(
+                        f"{self._version_str(version)} - {target} - {coll_str}"
+                    )
+                    dataset = Dataset(version)
+                    xgb = XGBoost(
+                        dataset=dataset,
+                        target=target,
+                        group_collinear_options=group_collinear_options,
+                    )
+                    xgb.fit()
+                    res[version][target][coll_str] = model_metrics(
+                        y_pred=xgb.pred(), y_true=xgb.y_test
+                    )
+        # TODO write res to excel
+        print(res)
+
     @staticmethod
     def _version_str(version: int | str) -> str:
         """Convert version before displaying."""
@@ -108,4 +141,7 @@ class Report:
 
 
 if __name__ == "__main__":
+    from tuxai.misc import config_logger
+
+    config_logger()
     Report().generate()

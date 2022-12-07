@@ -1,12 +1,17 @@
 """Only XGBoost for now."""
 
-import xgboost as xgb
-import numpy as np
-import pandas as pd
 import logging
+import tempfile
+from cachetools import cached
+from pathlib import Path
+
+import xgboost as xgb
+import pandas as pd
+import hashlib
 
 from tuxai.dataset import Dataset
 from tuxai.featureselection import CORR_PREFIX
+from tuxai.misc import cache
 
 LOG = logging.getLogger(__name__)
 
@@ -24,26 +29,74 @@ DEFAULT_XGBOOST_PARAMS = {
 class XGBoost:
     """Extreme Gradient Boosting."""
 
-    def __init__(self, dataset: Dataset, **kwargs) -> None:
+    def __init__(
+        self,
+        dataset: Dataset,
+        use_cache: bool = True,
+        target: str = "vmlinux",
+        group_collinear_options: bool = True,
+        collinearity_threshold: float = 0.0,
+        alpha: float = 6.0,
+        gamma: float = 2.0,
+        lambda_: float = 2.0,
+        max_depth: int = 6,
+        learning_rate: float = 0.1,
+        n_estimators: int = 100,
+        eval_metric: str = "mape",
+    ) -> None:
         """Remaining parameters are sent to model constructor."""
         self._dataset = dataset
-        self._xgb_reg = xgb.XGBRegressor(
-            **(DEFAULT_XGBOOST_PARAMS if not kwargs else kwargs)
+        self._parameters = {
+            "alpha": alpha,
+            "gamma": gamma,
+            "lambda": lambda_,
+            "max_depth": max_depth,
+            "learning_rate": learning_rate,
+            "n_estimators": n_estimators,
+            "eval_metric": eval_metric,
+        }
+
+        self.X_train, self.y_train, self.X_test, self.y_test = dataset.train_test_split(
+            target=target,
+            group_collinear_options=group_collinear_options,
+            collinearity_threshold=collinearity_threshold,
         )
 
-        # X_train, y_train, X_test, y_test
-        self._data_split = dataset.train_test_split()
+        self._is_trained = False
+        self._cache = cache() if use_cache else None
+
+        self._xgb_reg = xgb.XGBRegressor(random_state=2022, **self._parameters)
 
     def fit(self) -> None:
         """Train model."""
-        LOG.info("fit model")
-        X_train, y_train, _, _ = self._data_split
-        self._xgb_reg.fit(X_train, y_train)
+        if self._is_trained:
+            LOG.debug("model already trained.")
+            return
+        if self._cache:
+            if self._load():
+                self._is_trained = True
+                return
 
-    def pred(self) -> np.ndarray:
+        LOG.info("training model")
+
+        # fit with sorted options (/ pred)
+        self._xgb_reg.fit(
+            self.X_train.reindex(sorted(self.X_train.columns), axis=1), self.y_train
+        )
+        self._is_trained = True
+        LOG.debug("model trained")
+        if self._cache:
+            self._save()
+
+    def pred(self) -> list:
         """Get y_pred."""
-        _, _, X_test, _ = self._data_split
-        return self._xgb_reg.predict(X_test)
+        LOG.debug("make prediction.")
+        # predict with sorted options (/ fit) -> mandatory after loading model from cache
+        return list(
+            self._xgb_reg.predict(
+                self.X_test.reindex(sorted(self.X_test.columns), axis=1)
+            )
+        )
 
     def options_scores(
         self,
@@ -52,6 +105,7 @@ class XGBoost:
         limit: int | None = None,
     ) -> pd.DataFrame:
         """Get more important options for prediction."""
+        LOG.debug("compute features importance.")
         scores = self._xgb_reg.get_booster().get_score(importance_type="weight")
         df_scores = pd.DataFrame.from_dict(
             {"option": scores.keys(), "importance": scores.values()}
@@ -71,22 +125,58 @@ class XGBoost:
                 )
         return df_scores
 
+    @cached(cache={})
+    def _signature(self) -> str:
+        """Get model signature (training data + parameters)."""
+        LOG.debug("computing model signature...")
+        param = "|".join(
+            f"({key}:{self._parameters[key]})"
+            for key in sorted(self._parameters.keys())
+        )
+        # X_train.describe().to_string() is not stable enough for a key,
+        # so, we just take columns and hope for the best...
+        data = (
+            ", ".join(sorted(self.X_train.columns))
+            + self.y_train.describe().to_string()
+        )
+
+        signature = f"xgboost({self._dataset.version})|{hashlib.md5((param + data).encode()).hexdigest()}"
+        LOG.debug(f"model signature : {signature}")
+        return signature
+
+    def _save(self) -> None:
+        """Serialize model in cache."""
+        # create temporary file, read content and store in cache
+        with tempfile.TemporaryDirectory() as temp_dir:
+            key = self._signature()
+            LOG.debug(f"saving model: {key}")
+            json_path = Path(temp_dir) / "model.json"
+            self._xgb_reg.save_model(json_path)
+            self._cache[key] = json_path.read_text()
+
+    def _load(self) -> bool:
+        """Load model from cache."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            key = self._signature()
+            if found := key in self._cache:
+                LOG.debug(f"loading model: {key}")
+                json_path = Path(temp_dir) / "model.json"
+                json_path.write_text(self._cache[key])
+                self._xgb_reg.load_model(json_path)
+            else:
+                LOG.debug(f"model not found : {key}")
+            return found
+
 
 if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-
-    params = {
-        "max_depth": 5,
-        "alpha": 10,
-        "learning_rate": 0.1,
-        "n_estimators": 100,
-        "eval_metric": "mape",
-    }
-
     dataset = Dataset(508)
+    for _ in range(2):
+        model = XGBoost(dataset)
+        model.fit()
+        model.pred()
 
-    model = XGBoost(dataset, **params)
-    model.fit()
-    print(model.options_scores(limit=10))
+    # model._signature()
+    # print(model.options_scores(limit=10))

@@ -26,6 +26,7 @@ graphviz = "^0.20.1"
 tomli = "^2.0.1"
 diskcache = "^5.4.0"
 xlsxwriter = "^3.0.3"
+cachetools = "^5.2.0"
 
 
 [tool.poetry.group.dev.dependencies]

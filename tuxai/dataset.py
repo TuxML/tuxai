@@ -126,16 +126,24 @@ class Dataset:
         return df
 
     def train_test_split(
-        self, test_size: float = 0.2, target: str = "vmlinux"
+        self,
+        test_size: float = 0.2,
+        target: str = "vmlinux",
+        group_collinear_options: bool = True,
+        collinearity_threshold: float = 0.0,
     ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
         """Get X_train, y_train, X_test, y_test."""
-        df = self.get_dataframe()
-        df_train, df_test = train_test_split(df, test_size=test_size)
+        df = self.get_dataframe(
+            group_collinear_options=group_collinear_options,
+            collinearity_threshold=collinearity_threshold,
+        )
+        df_train, df_test = train_test_split(df, test_size=test_size, random_state=2022)
         options = self._options(df.columns)
         X_train = df_train[options]
         y_train = df_train[target]
         X_test = df_test[options]
         y_test = df_test[target]
+
         return X_train, y_train, X_test, y_test
 
     def _options(self, columns: list[str]) -> list[str]:
