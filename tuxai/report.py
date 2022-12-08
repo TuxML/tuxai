@@ -10,6 +10,8 @@ from matplotlib.lines import Line2D
 import seaborn as sns
 import pandas as pd
 from tqdm.auto import tqdm
+from typing import Callable
+import xgboost
 
 from tuxai.misc import date2dir, config
 from tuxai.dataset import Dataset
@@ -85,19 +87,7 @@ class Report:
         )
         self._config = config()
 
-    # def generate(self):
-    #     """Create excel file."""
-    #     LOG.info(f"generating excel report: {self._path}")
-    #     self._path.parent.mkdir(parents=True, exist_ok=True)
-    #     with pd.ExcelWriter(self._path, engine="xlsxwriter") as writer:
-    #         # trained model are stored in cache disk,
-    #         # so multiple fit call should not be a problem
-    #         if self._config["report"]["xgboost"]:
-    #             self._xgboost_model(writer)
-    #         if self._config["report"]["feature_importance"]:
-    #             self._feature_importance(writer)
-
-    def feature_importance(self) -> pd.DataFrame:
+    def feature_importance_deprecated(self) -> pd.DataFrame:
         """Generate feature importance report."""
         LOG.info("generating feature importance report")
         for version in (pbar := tqdm(self._config["report"]["versions"])):
@@ -107,17 +97,60 @@ class Report:
             xgb.fit()
             return xgb.options_scores(limit=self._config["report"]["feature_count"])
 
+    def feature_importance(
+        self,
+        versions: list[str] | None = None,
+        targets: list[str] | None = None,
+        group_collinear_options: bool = True,
+    ) -> pd.DataFrame:
+        """Generate feature importance report."""
+        LOG.info("generating feature importance report")
+
+        def _callback(xgb: xgboost.XGBRegressor) -> dict[str, float]:
+            """Retur metrics."""
+            return xgb.options_scores(limit=self._config["report"]["feature_count"])
+
+        return self._all_config(
+            callback=_callback,
+            versions=versions,
+            targets=targets,
+            group_collinear_options=group_collinear_options,
+        )
+
     def xgboost_model(
         self,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
         group_collinear_options: bool = True,
-    ) -> dict:
+    ) -> pd.DataFrame:
         """Test and generate report for each version/target/options.
 
         If not specified, get parameters from config file.
         """
         LOG.info("generating xgboost report")
+
+        def _callback(xgb: xgboost.XGBRegressor) -> dict[str, float]:
+            """Retur metrics."""
+            return model_metrics(y_pred=xgb.pred(), y_true=xgb.y_test)
+
+        return self._all_config(
+            callback=_callback,
+            versions=versions,
+            targets=targets,
+            group_collinear_options=group_collinear_options,
+        )
+
+    def _all_config(
+        self,
+        callback: Callable,
+        versions: list[str] | None = None,
+        targets: list[str] | None = None,
+        group_collinear_options: bool = True,
+    ) -> pd.DataFrame:
+        """Test and generate report for each version/target/options (common loop for reports).
+
+        If not specified, get parameters from config file.
+        """
         versions = self._config["report"]["versions"] if versions is None else versions
         targets = (
             self._config["report"]["xgboost_targets"] if targets is None else targets
@@ -144,16 +177,14 @@ class Report:
                         group_collinear_options=group_collinear_options,
                     )
                     xgb.fit()
-                    metrics = model_metrics(y_pred=xgb.pred(), y_true=xgb.y_test)
                     res.append(
                         {
                             "version": self._version_str(version),
                             "collinearity": group_collinear_options,
                             "target": target,
-                            **metrics,
+                            **callback(xgb),
                         }
                     )
-        # TODO write res to excel
         return pd.DataFrame.from_dict(res)
 
     @staticmethod
@@ -167,5 +198,5 @@ if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    df = Report().xgboost_model()
+    df = Report().feature_importance()
     print(df)

@@ -103,27 +103,40 @@ class XGBoost:
         corr_only: bool = False,
         corr_groups: bool = True,
         limit: int | None = None,
-    ) -> pd.DataFrame:
+        as_dataframe: bool = False,
+    ) -> pd.DataFrame | dict[str, dict]:
         """Get more important options for prediction."""
         LOG.debug("compute features importance.")
         scores = self._xgb_reg.get_booster().get_score(importance_type="weight")
-        df_scores = pd.DataFrame.from_dict(
-            {"option": scores.keys(), "importance": scores.values()}
-        ).sort_values("importance", ascending=False)
-        df_scores["position"] = range(1, len(scores) + 1)
+        df_scores = (
+            pd.DataFrame.from_dict(
+                {"option": scores.keys(), "importance": scores.values()}
+            )
+            .sort_values("importance", ascending=False)
+            .reset_index()
+            .drop(columns=["index"])
+        )
+        # df_scores["position"] = range(1, len(scores) + 1)
         if corr_only:
             df_scores = df_scores[df_scores.option.str.startswith(CORR_PREFIX)]
         if limit is not None:
             df_scores = df_scores.iloc[:limit]
         if corr_groups:
-            collinear_options = self._dataset.collinear_options_
-            if collinear_options:
+            if collinear_options := self._dataset.collinear_options_:
+                # add original collinear column names
                 df_scores["groups"] = df_scores.option.apply(
                     lambda option: (", ".join(collinear_options[option]))
                     if option in collinear_options
                     else option
                 )
-        return df_scores
+            else:
+                # make sure we have the same structure, with and without collinerarity
+                df_scores["groups"] = df_scores["option"]
+        return (
+            df_scores
+            if as_dataframe
+            else {k: v for k, v in df_scores.to_dict().items() if k != "index"}
+        )
 
     def _get_signature(self) -> str:
         """Get model signature (training data + parameters)."""
