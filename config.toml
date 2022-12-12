@@ -32,12 +32,10 @@
 
 [report]
     versions = [413, 415, 420, 500, 504, 507, 508]
-    #versions = [508, 415]  # debug
-    feature_importance = false
-    xgboost = true
-    feature_count = 9999999
     xgboost_targets = ["vmlinux", "GZIP-vmlinux", "BZIP2-vmlinux", "LZMA-vmlinux", "XZ-vmlinux", "LZO-vmlinux", "LZ4-vmlinux"]
-    #xgboost_targets = ["vmlinux", "GZIP-vmlinux"]  # debug
+    feature_count = 999999
+    top_feature_count = 50
+    
     
 
 [log]

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import logging
+from itertools import combinations, product
+from collections import defaultdict
 
 import numpy as np
 from sklearn import metrics
@@ -16,6 +18,7 @@ import xgboost
 from tuxai.misc import date2dir, config
 from tuxai.dataset import Dataset
 from tuxai.models import XGBoost
+from tuxai.featureselection import CORR_PREFIX
 
 LOG = logging.getLogger(__name__)
 
@@ -140,6 +143,155 @@ class Report:
             group_collinear_options=group_collinear_options,
         )
 
+    def feature_importance_stability(
+        self,
+        versions: list[str] | None = None,
+        targets: list[str] | None = None,
+        group_collinear_options: bool = True,
+        top_count: int | None = None,
+    ) -> dict:
+        """Compare feature importance between each configuration."""
+        # pick all configurations
+        df = self.feature_importance(
+            version=versions,
+            targets=targets,
+            group_collinear_options=group_collinear_options,
+        )
+        # from tuxai.misc import cache
+        # df = cache()["feature_importance_2022_12_13"]
+        top_count = (
+            self._config["report"]["top_feature_count"]
+            if top_count is None
+            else top_count
+        )
+
+        res = dict()
+
+        # we are working on variations of these parameters
+        base_cols = ("version", "collinearity", "target")
+        # pick 2 (set_col_a and set_col_b) and observe variation on remaing parameter (var_col)
+        for set_col_a, set_col_b in (
+            pbar_0 := tqdm(list(combinations(base_cols, 2)), position=0)
+        ):
+            var_col = [col for col in base_cols if col not in (set_col_a, set_col_b)][0]
+            # now, loop on all set_col_1, set_col2 combinations
+            for set_col_a_i, set_col_b_i in (
+                pbar_1 := tqdm(
+                    list(product(df[set_col_a].unique(), df[set_col_b].unique())),
+                    position=1,
+                    leave=False,
+                )
+            ):
+                conf_str = f"{set_col_a} = {set_col_a_i}, {set_col_b} = {set_col_b_i} -> {var_col}"
+                pbar_0.set_description(f"{set_col_a} + {set_col_b} -> {var_col}")
+                pbar_1.set_description(conf_str)
+
+                LOG.debug(f"comparing feature importance for {conf_str}")
+                # keep what we need to check variation on var_col
+                df_i = df[
+                    (df[set_col_a] == set_col_a_i) & (df[set_col_b] == set_col_b_i)
+                ]
+                # extracts every rankings for each config
+                options_ranks = defaultdict(list)
+                group_corr = dict()
+                corr_count = 0
+                for row_id, row in df_i.iterrows():
+                    # for idx, (rank, options) in enumerate(row.group.items()):
+                    for idx, ((rank, option), (_, group)) in enumerate(
+                        zip(row.option.items(), row.group.items())
+                    ):
+                        # handle collinear options
+                        if len(group) > 1:
+                            corr_count += 1
+                            sgroup = tuple(sorted(group))
+                            if sgroup in group_corr:
+                                option = group_corr[sgroup]
+                            else:
+                                option = group_corr[
+                                    sgroup
+                                ] = f"{CORR_PREFIX}{corr_count:04}"
+
+                        options_ranks[option].append(rank)
+                        # is_col_str = f" [{idx}] ({option})" if len(group) > 1 else ""
+                        # for item in group:
+                        #     options_ranks[f"{item}{is_col_str}"].append(rank)
+
+                # extract n best options (based on all time best position)
+                top_options = (
+                    pd.DataFrame.from_dict(
+                        {option: min(ranks) for option, ranks in options_ranks.items()},
+                        orient="index",
+                    )
+                    .sort_values(0)
+                    .iloc[:top_count]
+                    .index.to_list()
+                )
+                # keep only n best options (python >3.7, so, dict is insertion ordered)
+                top_options_ranks = {
+                    option: sorted(options_ranks[option]) for option in top_options
+                }
+                # flatten dataframe for plotting
+                flatten_ranks = pd.DataFrame.from_dict(
+                    [
+                        {"option": col, "rank": rank}
+                        for col, ranks in top_options_ranks.items()
+                        for rank in ranks
+                    ]
+                )
+                # plot
+                sns.set_theme(style="ticks")
+
+                fig, ax = plt.subplots(figsize=(15, 30))
+                plt.xlim(0, 100)
+                ax.xaxis.grid(True)
+                ax.set(ylabel="")
+                plt.title(conf_str)
+
+                sns.boxplot(
+                    x="rank",
+                    y="option",
+                    data=flatten_ranks,
+                    whis=[0, 100],
+                    width=0.6,
+                    palette="vlag",
+                    ax=ax,
+                )
+
+                # save result in a dataframe
+                df_res = pd.DataFrame.from_dict(
+                    {
+                        col: ", ".join(str(rank) for rank in sorted(ranks))
+                        for col, ranks in top_options_ranks.items()
+                    },
+                    orient="index",
+                    columns=["ranks"],
+                )
+
+                # add collinearity data
+                inv_group_corr = {
+                    corr_name: options for options, corr_name in group_corr.items()
+                }
+                df_res["option"] = df_res.index
+                df_res["group"] = df_res.option.apply(
+                    lambda option: (", ".join(inv_group_corr[option]))
+                    if option in inv_group_corr
+                    else ""
+                )
+                df_res = df_res.drop(columns=["option"])
+
+                # add new entry to result
+                res[conf_str] = {
+                    "config": (
+                        var_col,
+                        (set_col_a, set_col_a_i),
+                        (set_col_b, set_col_b_i),
+                    ),
+                    "plot": fig,
+                    "dataframe": df_res,
+                }
+                plt.close()
+        return res
+
     def _all_config(
         self,
         callback: Callable,
@@ -198,5 +350,5 @@ if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    df = Report().feature_importance()
+    df = Report().feature_importance_stability()
     print(df)

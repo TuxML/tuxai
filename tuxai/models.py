@@ -122,16 +122,17 @@ class XGBoost:
         if limit is not None:
             df_scores = df_scores.iloc[:limit]
         if corr_groups:
-            if collinear_options := self._dataset.collinear_options_:
-                # add original collinear column names
-                df_scores["groups"] = df_scores.option.apply(
-                    lambda option: (", ".join(collinear_options[option]))
-                    if option in collinear_options
-                    else option
-                )
-            else:
-                # make sure we have the same structure, with and without collinerarity
-                df_scores["groups"] = df_scores["option"]
+            # add original collinear column names
+            collinear_options = (
+                {}
+                if self._dataset.collinear_options_ is None
+                else self._dataset.collinear_options_
+            )
+            df_scores["group"] = df_scores.option.apply(
+                lambda option: collinear_options[option]
+                if option in collinear_options
+                else [option]
+            )
         return (
             df_scores
             if as_dataframe
