@@ -7,13 +7,15 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from diskcache import Cache
+from cachetools import cached
 
 import tomli
 
 DEFAULT_CONFIG_FILE = "config.toml"
 
 
-def config() -> dict:
+@cached(cache={})
+def get_config() -> dict:
     """Get config file."""
     config_path = Path(__file__).resolve().parent.parent / DEFAULT_CONFIG_FILE
     with open(config_path, "rb") as config_file:
@@ -22,14 +24,14 @@ def config() -> dict:
 
 def cache() -> Cache:
     """Get diskcache."""
-    cache_config = config()["diskcache"]
+    cache_config = get_config()["diskcache"]
     return Cache(cache_config["path"], size_limit=int(cache_config["size_limit"]))
 
 
 def config_logger():
     """Terminal + files configuration."""
     # read config
-    log_config = config()["log"]
+    log_config = get_config()["log"]
     log_path = log_config["path"]
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
     terminal_log_level = log_config["terminal_level"].upper()
@@ -71,5 +73,15 @@ def date2dir(dt: datetime | None = None, hm: bool = True) -> str:
     )
 
 
+def filter_options(columns: list[str], config: dict | None = None) -> list[str]:
+    """Keep options only."""
+    if config is None:
+        config = get_config()
+    targets = config["dataframe"]["targets"]
+    extras = config["dataframe"]["extras"]
+    # CORR features are kept
+    return [col for col in columns if col not in targets and col not in extras]
+
+
 if __name__ == "__main__":
-    print(config())
+    print(get_config())

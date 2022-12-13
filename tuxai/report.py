@@ -15,10 +15,10 @@ from tqdm.auto import tqdm
 from typing import Callable
 import xgboost
 
-from tuxai.misc import date2dir, config
+from tuxai.misc import date2dir, get_config
 from tuxai.dataset import Dataset
 from tuxai.models import XGBoost
-from tuxai.featureselection import CORR_PREFIX
+from tuxai.features import CORR_PREFIX
 
 LOG = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ class Report:
             / date2dir()
             / DEFAULT_REPORT_FILENAME
         )
-        self._config = config()
+        self._config = get_config()
 
     def feature_importance_deprecated(self) -> pd.DataFrame:
         """Generate feature importance report."""
@@ -153,7 +153,7 @@ class Report:
         """Compare feature importance between each configuration."""
         # pick all configurations
         df = self.feature_importance(
-            version=versions,
+            versions=versions,
             targets=targets,
             group_collinear_options=group_collinear_options,
         )

@@ -9,8 +9,8 @@ import pandas as pd
 from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 
-from tuxai.misc import config, config_logger
-from tuxai.featureselection import Collinearity
+from tuxai.misc import get_config, config_logger, filter_options
+from tuxai.features import Collinearity
 
 LOG = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class Dataset:
     def __init__(self, version: int | float | str) -> None:
         """Convert version to string (413 == 4.13 == "413" == "4.13")."""
         self._version = str(version).replace(".", "")
-        self._config = config()
+        self._config = get_config()
         self.collinear_options_: dict[str, list[str]] | None = None
 
     @property
@@ -63,7 +63,7 @@ class Dataset:
                 for target in self._config["dataframe"]["targets"]:
                     df[target] /= 1024 * 1024
                     df[target] = df[target].astype("float")
-                for col in tqdm(self._options(df.columns)):
+                for col in tqdm(filter_options(df.columns, config=self._config)):
                     df[col] = df[col].astype("bool")
             df.to_parquet(parquet, engine="pyarrow")
         df = pd.read_parquet(parquet, engine="pyarrow").drop_duplicates()
@@ -86,7 +86,7 @@ class Dataset:
             case Columns.extra:
                 return df[self._config["dataframe"]["extras"]]
             case Columns.options:
-                options = self._options(df.columns)
+                options = filter_options(df.columns, config=self._config)
                 df = df[options]
                 return (
                     self._group_colinar_options(
@@ -106,7 +106,7 @@ class Dataset:
     ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
         """Return dataframe with grouped options + group details."""
         # split options from other columns
-        options = self._options(dataframe.columns)
+        options = filter_options(dataframe.columns)
         not_options = [col for col in dataframe.columns if col not in options]
         df_options = dataframe[options]
         df_not_options = dataframe[not_options]
@@ -138,19 +138,13 @@ class Dataset:
             collinearity_threshold=collinearity_threshold,
         )
         df_train, df_test = train_test_split(df, test_size=test_size, random_state=2022)
-        options = self._options(df.columns)
+        options = filter_options(df.columns, config=self._config)
         X_train = df_train[options]
         y_train = df_train[target]
         X_test = df_test[options]
         y_test = df_test[target]
 
         return X_train, y_train, X_test, y_test
-
-    def _options(self, columns: list[str]) -> list[str]:
-        """Keep options only."""
-        targets = self._config["dataframe"]["targets"]
-        extras = self._config["dataframe"]["extras"]
-        return [col for col in columns if col not in targets and col not in extras]
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import pandas as pd
 import hashlib
 
 from tuxai.dataset import Dataset
-from tuxai.featureselection import CORR_PREFIX
+from tuxai.features import CORR_PREFIX
 from tuxai.misc import cache
 
 LOG = logging.getLogger(__name__)

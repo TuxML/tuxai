@@ -5,11 +5,12 @@ import hashlib
 import pandas as pd
 import numpy as np
 
-from tuxai.misc import config, cache
+from tuxai.misc import get_config, cache, filter_options
 
 LOG = logging.getLogger(__name__)
 
 CORR_PREFIX = "CORR|"
+NB_YES_COL = "nb_yes"
 
 
 class Collinearity:
@@ -17,7 +18,7 @@ class Collinearity:
 
     def __init__(self, dataframe: pd.DataFrame) -> None:
         """Enable dataset instance, in order to save memory."""
-        self._config = config()
+        self._config = get_config()
         self._dataframe = dataframe
         self._cache = cache()
 
@@ -98,16 +99,54 @@ class Collinearity:
         return self._dataframe, groups
 
 
+class FeatureEngineering:
+    """Add features to dataset."""
+
+    def __init__(self, dataframe: pd.DataFrame) -> None:
+        """Keep dataframe reference."""
+        self._dataframe = dataframe
+
+    def add_nb_yes_feature(
+        self, val_range: tuple[float, float] | None = None
+    ) -> pd.DataFrame:
+        """Add nb_yes column, containing activated options count."""
+        # drop if exists
+        if NB_YES_COL in self._dataframe.columns:
+            LOG.debug(f"drop existing feature {NB_YES_COL}")
+            self._dataframe.drop(columns=[NB_YES_COL])
+        # boolean count as 1
+        # count options only
+        self._dataframe[NB_YES_COL] = self._dataframe[
+            filter_options(self._dataframe)
+        ].sum(axis=1)
+
+        if val_range:
+            # linear interpolation
+            LOG.debug(f"apply range {val_range}")
+            min_val = self._dataframe[NB_YES_COL].min()
+            max_val = self._dataframe[NB_YES_COL].max()
+            self._dataframe[NB_YES_COL] = self._dataframe[NB_YES_COL].apply(
+                lambda val: np.interp(val, (min_val, max_val), val_range)
+            )
+        return self._dataframe
+
+
 if __name__ == "__main__":
     from tuxai.misc import config_logger
     from tuxai.dataset import Dataset, Columns
-    from tqdm import tqdm
+
+    # from tqdm import tqdm
 
     config_logger()
 
-    for ver in tqdm((413, 415, 420, 500, 504, 507, 508)):
-        LOG.info(ver)
-        Collinearity(Dataset(ver).get_dataframe(Columns.options)).correlated_features()
+    df = FeatureEngineering(
+        Dataset(413).get_dataframe(Columns.options)
+    ).add_nb_yes_feature()
+    print(df)
+
+    # for ver in tqdm((413, 415, 420, 500, 504, 507, 508)):
+    #     LOG.info(ver)
+    #     Collinearity(Dataset(ver).get_dataframe(Columns.options)).correlated_features()
 
     # from pathlib import Path
     # import pickle
@@ -116,7 +155,7 @@ if __name__ == "__main__":
 
     # # old
     # OPTION_COMPARISON_MATRIX_CACHE = "ocm.pkl"
-    # cache_dir = config()["diskcache"]["path"]
+    # cache_dir = get_config()["diskcache"]["path"]
     # cache_path = (
     #     Path(cache_dir).parent / "cache_old" / f"{413}_{OPTION_COMPARISON_MATRIX_CACHE}"
     # )
