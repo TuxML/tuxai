@@ -33,8 +33,6 @@ class XGBoost:
         dataset: Dataset,
         use_cache: bool = True,
         target: str = "vmlinux",
-        group_collinear_options: bool = True,
-        collinearity_threshold: float = 0.0,
         alpha: float = 6.0,
         gamma: float = 2.0,
         lambda_: float = 2.0,
@@ -42,6 +40,7 @@ class XGBoost:
         learning_rate: float = 0.1,
         n_estimators: int = 100,
         eval_metric: str = "mape",
+        **kwargs,
     ) -> None:
         """Remaining parameters are sent to model constructor."""
         self._dataset = dataset
@@ -56,9 +55,7 @@ class XGBoost:
         }
 
         self.X_train, self.y_train, self.X_test, self.y_test = dataset.train_test_split(
-            target=target,
-            group_collinear_options=group_collinear_options,
-            collinearity_threshold=collinearity_threshold,
+            target=target, **kwargs
         )
 
         self._is_trained = False

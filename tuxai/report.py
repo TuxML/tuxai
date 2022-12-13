@@ -125,6 +125,7 @@ class Report:
         versions: list[str] | None = None,
         targets: list[str] | None = None,
         group_collinear_options: bool = True,
+        **kwargs,
     ) -> pd.DataFrame:
         """Test and generate report for each version/target/options.
 
@@ -141,6 +142,7 @@ class Report:
             versions=versions,
             targets=targets,
             group_collinear_options=group_collinear_options,
+            **kwargs,
         )
 
     def feature_importance_stability(
@@ -298,6 +300,7 @@ class Report:
         versions: list[str] | None = None,
         targets: list[str] | None = None,
         group_collinear_options: bool = True,
+        **kwargs,
     ) -> pd.DataFrame:
         """Test and generate report for each version/target/options (common loop for reports).
 
@@ -327,6 +330,7 @@ class Report:
                         dataset=dataset,
                         target=target,
                         group_collinear_options=group_collinear_options,
+                        **kwargs,
                     )
                     xgb.fit()
                     res.append(

@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 
 from tuxai.misc import get_config, config_logger, filter_options
-from tuxai.features import Collinearity
+from tuxai.features import Collinearity, FeatureEngineering
 
 LOG = logging.getLogger(__name__)
 
@@ -45,6 +45,8 @@ class Dataset:
         group_collinear_options: bool = True,
         collinearity_threshold: float = 0.0,
         return_collinear_groups: bool = False,
+        add_features: bool = True,
+        nb_yes_range: tuple[float, float] = (0, 1),
     ) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, list[str]]]:
         """Get raw Pandas DataFrame.
 
@@ -72,7 +74,7 @@ class Dataset:
 
         match col_filter:
             case Columns.all:
-                return (
+                df = (
                     self._group_colinar_options(
                         dataframe=df,
                         threshold=collinearity_threshold,
@@ -81,6 +83,9 @@ class Dataset:
                     if group_collinear_options
                     else df
                 )
+                if add_features:
+                    self._add_features(dataframe=df, nb_yes_range=nb_yes_range)
+                return df
             case Columns.targets:
                 return df[self._config["dataframe"]["targets"]]
             case Columns.extra:
@@ -88,7 +93,7 @@ class Dataset:
             case Columns.options:
                 options = filter_options(df.columns, config=self._config)
                 df = df[options]
-                return (
+                df = (
                     self._group_colinar_options(
                         dataframe=df,
                         threshold=collinearity_threshold,
@@ -97,6 +102,17 @@ class Dataset:
                     if group_collinear_options
                     else df
                 )
+                if add_features:
+                    self._add_features(dataframe=df, nb_yes_range=nb_yes_range)
+                return df
+
+    def _add_features(
+        self, dataframe: pd.DataFrame, nb_yes_range: tuple[float, float]
+    ) -> pd.DataFrame:
+        """Feature engineering: add everything available."""
+        LOG.debug("add features")
+        feature_engineering = FeatureEngineering(dataframe)
+        return feature_engineering.add_nb_yes_feature(val_range=nb_yes_range)
 
     def _group_colinar_options(
         self,
@@ -126,17 +142,10 @@ class Dataset:
         return df
 
     def train_test_split(
-        self,
-        test_size: float = 0.2,
-        target: str = "vmlinux",
-        group_collinear_options: bool = True,
-        collinearity_threshold: float = 0.0,
+        self, test_size: float = 0.2, target: str = "vmlinux", **kwargs
     ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
         """Get X_train, y_train, X_test, y_test."""
-        df = self.get_dataframe(
-            group_collinear_options=group_collinear_options,
-            collinearity_threshold=collinearity_threshold,
-        )
+        df = self.get_dataframe(**kwargs)
         df_train, df_test = train_test_split(df, test_size=test_size, random_state=2022)
         options = filter_options(df.columns, config=self._config)
         X_train = df_train[options]
@@ -150,6 +159,7 @@ class Dataset:
 if __name__ == "__main__":
     config_logger()
     LOG.info("log test")
+    Dataset(508).get_dataframe(add_features=True, nb_yes_range=(0, 1))
 
     # precompute
     # for ver in (413, 415, 420, 500, 504, 507, 508):
