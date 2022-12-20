@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 from typing import Callable
 import xgboost
 
-from tuxai.misc import date2dir, get_config
+from tuxai.misc import date2dir, get_config, cache
 from tuxai.dataset import Dataset
 from tuxai.models import XGBoost
 from tuxai.features import CORR_PREFIX
@@ -346,11 +346,22 @@ class Report:
 class FeatureImportanceReport:
     """Answer some preliminary feature importance questions."""
 
-    def __init__(self) -> None:
+    def __init__(self, use_cache: str | None = None) -> None:
         """All raw data come from Report class."""
         # pick all configurations
         report = Report()
-        df = report.feature_importance()
+
+        if use_cache is None:
+            df = report.feature_importance()
+        else:
+            cache_ = cache()
+            if use_cache in cache_:
+                LOG.info(f"loading feature importance data from cache: {use_cache}")
+                df = cache_[use_cache]
+            else:
+                df = report.feature_importance()
+                cache_[use_cache] = df
+
         self._df = self._explode_df(df)
 
     def options_always_importants(
@@ -418,6 +429,27 @@ class FeatureImportanceReport:
 
         return self._display_rank_by_version(df[df.group.isin(groups)], ascending=True)
 
+    def target_comparison(
+        self, target_1: str, target_2: str, rank: int = 30, collinearity: bool = True
+    ) -> pd.DataFrame:
+        """Compare top N for 2 targets."""
+        df_1 = self.options_always_importants(
+            target=target_1, rank=rank, collinearity=collinearity
+        )
+
+        df_2 = self.options_always_importants(
+            target=target_2, rank=rank, collinearity=collinearity
+        )
+        s_1 = set(df_1.options)
+        s_2 = set(df_2.options)
+        oai = {
+            f"{target_1} only": df_1[df_1.options.isin(s_1 - s_2)],
+            f"{target_2} only": df_2[df_2.options.isin(s_2 - s_1)],
+            f"{target_1} and {target_2}": s_1 & s_2,
+        }
+
+        return {f"always top {rank}": oai}
+
     def _keep(
         self,
         dataframe: pd.DataFrame,
@@ -436,6 +468,8 @@ class FeatureImportanceReport:
     def _display_rank_by_version(
         self, dataframe: pd.DataFrame, ascending: bool | None = None
     ) -> pd.DataFrame:
+        if dataframe.empty:
+            return dataframe
         df = (
             dataframe.groupby(["target", "group"])[["version", "rank"]]
             .agg(list)
@@ -472,7 +506,7 @@ class FeatureImportanceReport:
                             "collinearity": row.collinearity,
                             "target": row.target,
                             "option": option,
-                            "group": ", ".join(group),
+                            "group": ", ".join(sorted(group)),
                             "rank": rank,
                         }
                     )
@@ -484,5 +518,6 @@ if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    df = Report().feature_importance_stability()
-    print(df)
+    fir = FeatureImportanceReport(use_cache="fi_const_2022_12_21")
+    fir.target_comparison("vmlinux", "BZIP2-vmlinux", 30, True)
+    print(fir._df)
