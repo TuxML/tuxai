@@ -90,21 +90,11 @@ class Report:
         )
         self._config = get_config()
 
-    def feature_importance_deprecated(self) -> pd.DataFrame:
-        """Generate feature importance report."""
-        LOG.info("generating feature importance report")
-        for version in (pbar := tqdm(self._config["report"]["versions"])):
-            pbar.set_description(self._version_str(version))
-            dataset = Dataset(version)
-            xgb = XGBoost(dataset)
-            xgb.fit()
-            return xgb.options_scores(limit=self._config["report"]["feature_count"])
-
     def feature_importance(
         self,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
-        group_collinear_options: bool = True,
+        group_collinear_options: bool = None,
     ) -> pd.DataFrame:
         """Generate feature importance report."""
         LOG.info("generating feature importance report")
@@ -124,7 +114,7 @@ class Report:
         self,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
-        group_collinear_options: bool = True,
+        group_collinear_options: bool = None,
         **kwargs,
     ) -> pd.DataFrame:
         """Test and generate report for each version/target/options.
@@ -152,7 +142,10 @@ class Report:
         group_collinear_options: bool = True,
         top_count: int | None = None,
     ) -> dict:
-        """Compare feature importance between each configuration."""
+        """Compare feature importance between each configuration.
+
+        WARNING: somewhat deprecated version.
+        """
         # pick all configurations
         df = self.feature_importance(
             versions=versions,
@@ -299,7 +292,7 @@ class Report:
         callback: Callable,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
-        group_collinear_options: bool = True,
+        group_collinear_options: bool | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         """Test and generate report for each version/target/options (common loop for reports).
@@ -311,7 +304,7 @@ class Report:
             self._config["report"]["xgboost_targets"] if targets is None else targets
         )
         group_collinear_options_list = (
-            (False, True) if group_collinear_options else (False,)
+            [group_collinear_options] if group_collinear_options else [False, True]
         )
         res = list()
         for version in (pbar_0 := tqdm(versions, position=0)):
@@ -348,6 +341,143 @@ class Report:
         """Convert version before displaying."""
         str_ver = str(version)
         return f"{str_ver[0]}.{str_ver[1:]}"
+
+
+class FeatureImportanceReport:
+    """Answer some preliminary feature importance questions."""
+
+    def __init__(self) -> None:
+        """All raw data come from Report class."""
+        # pick all configurations
+        report = Report()
+        df = report.feature_importance()
+        self._df = self._explode_df(df)
+
+    def options_always_importants(
+        self, target, rank: int = 30, collinearity: bool = True
+    ) -> pd.DataFrame:
+        """Options always < top N, regardless of version."""
+        df = self._df.copy()
+        df = self._keep(df, targets=[target], collinearities=[collinearity])
+
+        # list of top N options
+        options = list()
+        for option in tqdm(df.option.unique()):
+            if all(
+                [
+                    option_rank <= rank
+                    for option_rank in df[df.option == option]["rank"].unique()
+                ]
+            ):
+                options.append(option)
+
+        return self._display_rank_by_version(
+            df[df.option.isin(options)], ascending=True
+        )
+
+    def options_never_importants(
+        self, target, rank: int = 300, collinearity: bool = True
+    ) -> pd.DataFrame:
+        """Options always > top N, regardless of version."""
+        df = self._df.copy()
+        df = self._keep(df, targets=[target], collinearities=[collinearity])
+
+        # list of worst N options
+        options = list()
+        for option in tqdm(df.option.unique()):
+            if all(
+                [
+                    option_rank >= rank
+                    for option_rank in df[df.option == option]["rank"].unique()
+                ]
+            ):
+                options.append(option)
+
+        return self._display_rank_by_version(
+            df[df.option.isin(options)], ascending=False
+        )
+
+    def options_not_always_importants(
+        self, target, best_rank: int = 30, worst_rank=300, collinearity: bool = True
+    ) -> pd.DataFrame:
+        """Options at least once <= best_rank and at least once >= worst_rank, regardless of version."""
+        df = self._df.copy()
+        df = self._keep(df, targets=[target], collinearities=[collinearity])
+
+        # list of top N options
+        # options = list()
+        # for option in tqdm(df.option.unique()):
+        #     ranks = sorted(df[df.option == option]["rank"].unique())
+        #     if ranks[0] <= best_rank and ranks[-1] >= worst_rank:
+        #         options.append(option)
+        groups = list()
+        for group in tqdm(df.group.unique()):
+            ranks = sorted(df[df.group == group]["rank"].unique())
+            if ranks[0] <= best_rank and ranks[-1] >= worst_rank:
+                groups.append(group)
+
+        return self._display_rank_by_version(df[df.group.isin(groups)], ascending=True)
+
+    def _keep(
+        self,
+        dataframe: pd.DataFrame,
+        versions: list[str] | None = None,
+        targets: list[str] | None = None,
+        collinearities: list[bool] | None = None,
+    ):
+        if versions:
+            dataframe = dataframe[dataframe.version.isin(versions)]
+        if targets:
+            dataframe = dataframe[dataframe.target.isin(targets)]
+        if collinearities:
+            dataframe = dataframe[dataframe.collinearity.isin(collinearities)]
+        return dataframe
+
+    def _display_rank_by_version(
+        self, dataframe: pd.DataFrame, ascending: bool | None = None
+    ) -> pd.DataFrame:
+        df = (
+            dataframe.groupby(["target", "group"])[["version", "rank"]]
+            .agg(list)
+            .reset_index()
+        )
+        split_cols = dict()
+        for idx, item in df.to_dict(orient="index").items():
+            split_cols[idx] = {"options": item["group"]}
+            split_cols[idx].update(
+                {version: rank for version, rank in zip(item["version"], item["rank"])}
+            )
+
+        # back to dataframe
+        df = pd.DataFrame.from_dict(split_cols, orient="index")
+        df[df.columns[1:]] = df[df.columns[1:]].astype("Int64", errors="ignore")
+        df = df[[df.columns[0]] + sorted(df.columns[1:])]
+
+        # sort by rank mean
+        if ascending is not None:
+            df["rank_mean"] = df[df.columns[1:]].mean(axis=1)
+            df = df.sort_values("rank_mean", ascending=ascending)
+            df = df.drop(columns=["rank_mean"])
+            return df
+
+    def _explode_df(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        """One line for each dict item in option, rank and group."""
+        res = list()
+        for _, row in dataframe.iterrows():
+            for rank, group in row.group.items():
+                for option in group:
+                    res.append(
+                        {
+                            "version": row.version,
+                            "collinearity": row.collinearity,
+                            "target": row.target,
+                            "option": option,
+                            "group": ", ".join(group),
+                            "rank": rank,
+                        }
+                    )
+
+        return pd.DataFrame.from_dict(res)
 
 
 if __name__ == "__main__":
