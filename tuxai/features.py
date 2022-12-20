@@ -114,6 +114,8 @@ class FeatureEngineering:
         if NB_YES_COL in self._dataframe.columns:
             LOG.debug(f"drop existing feature {NB_YES_COL}")
             self._dataframe.drop(columns=[NB_YES_COL])
+
+        LOG.info(f"add {NB_YES_COL} feature.")
         # boolean count as 1
         # count options only
         self._dataframe[NB_YES_COL] = self._dataframe[
@@ -130,6 +132,20 @@ class FeatureEngineering:
             )
         return self._dataframe
 
+    def add_random_features(self, name: str, add_clones: int = 0) -> pd.DataFrame:
+        """Add random_00n column. add_clone parameter create multiple columns with same values."""
+        if add_clones == 0:
+            columns = [name]
+        else:
+            columns = [f"{name}_{num}" for num in range(add_clones + 1)]
+
+        LOG.info(f"add {', '.join(columns)} feature(s).")
+
+        data = np.random.choice(a=[True, False], size=len(self._dataframe))
+        for column in columns:
+            self._dataframe[column] = data
+        return self._dataframe
+
 
 if __name__ == "__main__":
     from tuxai.misc import config_logger
@@ -141,7 +157,7 @@ if __name__ == "__main__":
 
     df = FeatureEngineering(
         Dataset(413).get_dataframe(Columns.options)
-    ).add_nb_yes_feature()
+    ).add_random_features("random", add_clones=3)
     print(df)
 
     # for ver in tqdm((413, 415, 420, 500, 504, 507, 508)):
