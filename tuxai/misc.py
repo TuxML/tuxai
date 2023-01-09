@@ -1,10 +1,12 @@
 """Collection of miscellaneous functions."""
 
 from datetime import datetime
+from io import BytesIO
 
 from pathlib import Path
 import logging
 from logging.handlers import RotatingFileHandler
+import pandas as pd
 
 from diskcache import Cache
 from cachetools import cached
@@ -81,6 +83,16 @@ def filter_options(columns: list[str], config: dict | None = None) -> list[str]:
     extras = config["dataframe"]["extras"]
     # CORR features are kept
     return [col for col in columns if col not in targets and col not in extras]
+
+
+def df2bio(df: pd.DataFrame) -> BytesIO:
+    """Transform DataFrame to BytesIO."""
+    return BytesIO(df.to_parquet(engine="pyarrow"))
+
+
+def bio2df(bio: BytesIO) -> pd.DataFrame:
+    """Transform BytesIO to DataFrame."""
+    return pd.read_parquet(bio)
 
 
 if __name__ == "__main__":

@@ -5,3 +5,6 @@ reports/
 TODO
 notebooks/2022_12_05.ipynb
 *copy.ipynb
+journal
+*.csv
+sandbox.py

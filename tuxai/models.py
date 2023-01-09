@@ -105,6 +105,13 @@ class XGBoost:
         """Get more important options for prediction."""
         LOG.debug("compute features importance.")
         scores = self._xgb_reg.get_booster().get_score(importance_type="weight")
+
+        # xgboost/core.py: get_score(...) notes: "Zero-importance features will not be included"
+        # -> add them manually
+        scores.update(
+            {option: 0.0 for option in (set(self.X_train.columns) - set(scores.keys()))}
+        )
+
         df_scores = (
             pd.DataFrame.from_dict(
                 {"option": scores.keys(), "importance": scores.values()}
@@ -113,6 +120,7 @@ class XGBoost:
             .reset_index()
             .drop(columns=["index"])
         )
+
         # df_scores["position"] = range(1, len(scores) + 1)
         if corr_only:
             df_scores = df_scores[df_scores.option.str.startswith(CORR_PREFIX)]
@@ -180,11 +188,10 @@ if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    dataset = Dataset(508)
-    for _ in range(2):
-        model = XGBoost(dataset)
-        model.fit()
-        model.pred()
+    dataset = Dataset(415)
+    model = XGBoost(dataset, target="LZ4-vmlinux", group_collinear_options=True)
+    model.fit()
+    model.options_scores(corr_only=True, corr_groups=True)
 
     # model._signature()
     # print(model.options_scores(limit=10))

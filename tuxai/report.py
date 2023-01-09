@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 from typing import Callable
 import xgboost
 
-from tuxai.misc import date2dir, get_config, cache
+from tuxai.misc import date2dir, get_config, cache  # , bio2df, df2bio
 from tuxai.dataset import Dataset
 from tuxai.models import XGBoost
 from tuxai.features import CORR_PREFIX
@@ -94,27 +94,30 @@ class Report:
         self,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
-        group_collinear_options: bool = None,
+        collinearities: list[bool] | None = None,
     ) -> pd.DataFrame:
         """Generate feature importance report."""
         LOG.info("generating feature importance report")
 
         def _callback(xgb: xgboost.XGBRegressor) -> dict[str, float]:
             """Retur metrics."""
-            return xgb.options_scores(limit=self._config["report"]["feature_count"])
+            feature_limit = self._config["report"]["feature_limit"]
+            if feature_limit < 0:
+                feature_limit = None
+            return xgb.options_scores(limit=feature_limit)
 
         return self._all_config(
             callback=_callback,
             versions=versions,
             targets=targets,
-            group_collinear_options=group_collinear_options,
+            collinearities=collinearities,
         )
 
     def xgboost_model(
         self,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
-        group_collinear_options: bool = None,
+        collinearities: list[bool] | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         """Test and generate report for each version/target/options.
@@ -131,7 +134,7 @@ class Report:
             callback=_callback,
             versions=versions,
             targets=targets,
-            group_collinear_options=group_collinear_options,
+            collinearities=collinearities,
             **kwargs,
         )
 
@@ -139,7 +142,7 @@ class Report:
         self,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
-        group_collinear_options: bool = True,
+        collinearities: list[bool] | None = None,
         top_count: int | None = None,
     ) -> dict:
         """Compare feature importance between each configuration.
@@ -150,7 +153,7 @@ class Report:
         df = self.feature_importance(
             versions=versions,
             targets=targets,
-            group_collinear_options=group_collinear_options,
+            collinearities=collinearities,
         )
         # from tuxai.misc import cache
         # df = cache()["feature_importance_2022_12_13"]
@@ -292,7 +295,7 @@ class Report:
         callback: Callable,
         versions: list[str] | None = None,
         targets: list[str] | None = None,
-        group_collinear_options: bool | None = None,
+        collinearities: list[bool] | None = None,
         **kwargs,
     ) -> pd.DataFrame:
         """Test and generate report for each version/target/options (common loop for reports).
@@ -303,18 +306,14 @@ class Report:
         targets = (
             self._config["report"]["xgboost_targets"] if targets is None else targets
         )
-        group_collinear_options_list = (
-            [group_collinear_options] if group_collinear_options else [False, True]
-        )
+        collinearities = [True, False] if collinearities is None else collinearities
         res = list()
         for version in (pbar_0 := tqdm(versions, position=0)):
             dataset = Dataset(version)
             for target in (pbar_1 := tqdm(targets, position=1, leave=False)):
-                for group_collinear_options in group_collinear_options_list:
+                for collinearity in collinearities:
                     coll_str = (
-                        "with collinearity"
-                        if group_collinear_options
-                        else "no collinearity"
+                        "with collinearity" if collinearity else "no collinearity"
                     )
                     pbar_0.set_description(self._version_str(version))
                     pbar_1.set_description(f"{target} - {coll_str}")
@@ -322,14 +321,14 @@ class Report:
                     xgb = XGBoost(
                         dataset=dataset,
                         target=target,
-                        group_collinear_options=group_collinear_options,
+                        group_collinear_options=collinearity,
                         **kwargs,
                     )
                     xgb.fit()
                     res.append(
                         {
                             "version": self._version_str(version),
-                            "collinearity": group_collinear_options,
+                            "collinearity": collinearity,
                             "target": target,
                             **callback(xgb),
                         }
@@ -357,9 +356,13 @@ class FeatureImportanceReport:
             cache_ = cache()
             if use_cache in cache_:
                 LOG.info(f"loading feature importance data from cache: {use_cache}")
+                # pyarrow cannot handle dicts in columns
+                # df = bio2df(cache_[use_cache])
                 df = cache_[use_cache]
             else:
                 df = report.feature_importance()
+                # pyarrow cannot handle dicts in columns
+                # cache_[use_cache] = df2bio(df)
                 cache_[use_cache] = df
 
         self._df = self._explode_df(df)
@@ -475,6 +478,7 @@ class FeatureImportanceReport:
             .agg(list)
             .reset_index()
         )
+        # convert to dict because it's easier to manipulate here
         split_cols = dict()
         for idx, item in df.to_dict(orient="index").items():
             split_cols[idx] = {"options": item["group"]}

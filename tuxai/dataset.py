@@ -69,6 +69,10 @@ class Dataset:
                     df[col] = df[col].astype("bool")
             df.to_parquet(parquet, engine="pyarrow")
         df = pd.read_parquet(parquet, engine="pyarrow").drop_duplicates()
+
+        # reset collinear options
+        self.collinear_options_ = None
+
         if return_collinear_groups and col_filter in (Columns.targets, Columns.extra):
             LOG.warning(f"collinearity not supported for col_filter={col_filter.name}")
 

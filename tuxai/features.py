@@ -5,7 +5,7 @@ import hashlib
 import pandas as pd
 import numpy as np
 
-from tuxai.misc import get_config, cache, filter_options
+from tuxai.misc import get_config, cache, filter_options, df2bio, bio2df
 
 LOG = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class Collinearity:
         key = f"corr_matrix|{hashlib.md5(key_part.encode()).hexdigest()}"
         if key in self._cache:
             LOG.debug("loading correlation matrix from cache")
-            return self._cache[key]
+            return bio2df(self._cache[key])
 
         LOG.info(
             "computing correlation matrix between provided features "
@@ -39,7 +39,7 @@ class Collinearity:
         # computing actual matrix (kind of slow)
         corr_mat = self._dataframe.corr()
         LOG.debug("serializing correlation matrix.")
-        self._cache[key] = corr_mat
+        self._cache[key] = df2bio(corr_mat)
         return corr_mat
 
     def correlated_features(self, threshold: float = 0.0) -> list[list[str]]:
@@ -115,7 +115,7 @@ class FeatureEngineering:
             LOG.debug(f"drop existing feature {NB_YES_COL}")
             self._dataframe.drop(columns=[NB_YES_COL])
 
-        LOG.info(f"add {NB_YES_COL} feature.")
+        LOG.debug(f"add {NB_YES_COL} feature.")
         # boolean count as 1
         # count options only
         self._dataframe[NB_YES_COL] = self._dataframe[
