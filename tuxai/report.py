@@ -16,7 +16,7 @@ from typing import Callable
 import xgboost
 
 from tuxai.misc import date2dir, get_config, cache  # , bio2df, df2bio
-from tuxai.dataset import Dataset
+from tuxai.dataset import Dataset, Columns
 from tuxai.models import XGBoost
 from tuxai.features import CORR_PREFIX
 
@@ -368,11 +368,17 @@ class FeatureImportanceReport:
         self._df = self._explode_df(df)
 
     def options_always_importants(
-        self, target, rank: int = 30, collinearity: bool = True
+        self,
+        target: str,
+        rank: int = 30,
+        collinearity: bool = True,
+        merge_groups: bool = False,
     ) -> pd.DataFrame:
         """Options always < top N, regardless of version."""
         df = self._df.copy()
         df = self._keep(df, targets=[target], collinearities=[collinearity])
+        if merge_groups:
+            df = self._add_merged_group(df)
 
         # list of top N options
         options = list()
@@ -386,11 +392,11 @@ class FeatureImportanceReport:
                 options.append(option)
 
         return self._display_rank_by_version(
-            df[df.option.isin(options)], ascending=True
+            df[df.option.isin(options)], ascending=True, display_merged=merge_groups
         )
 
     def options_never_importants(
-        self, target, rank: int = 300, collinearity: bool = True
+        self, target: str, rank: int = 300, collinearity: bool = True
     ) -> pd.DataFrame:
         """Options always > top N, regardless of version."""
         df = self._df.copy()
@@ -412,7 +418,11 @@ class FeatureImportanceReport:
         )
 
     def options_not_always_importants(
-        self, target, best_rank: int = 30, worst_rank=300, collinearity: bool = True
+        self,
+        target: str,
+        best_rank: int = 30,
+        worst_rank=300,
+        collinearity: bool = True,
     ) -> pd.DataFrame:
         """Options at least once <= best_rank and at least once >= worst_rank, regardless of version."""
         df = self._df.copy()
@@ -453,6 +463,39 @@ class FeatureImportanceReport:
 
         return {f"always top {rank}": oai}
 
+    def add_yes_frequencies(
+        self, dataframe: pd.DataFrame, str_pct: bool = False
+    ) -> pd.DataFrame:
+        """Add yes/(yes+no) on all features for each version."""
+        res = dict()
+        for version in tqdm(dataframe.columns):
+            df, groups = Dataset(version).get_dataframe(
+                add_features=False,
+                col_filter=Columns.options,
+                group_collinear_options=True,
+                return_collinear_groups=True,
+            )
+            groups = {k: ", ".join(sorted(v)) for k, v in groups.items()}
+            groups_inv = {v: k for k, v in groups.items()}
+
+            nai_options = [option for option in dataframe.index if option in df.columns]
+            nai_options_col = [
+                option for option in dataframe.index if option in groups_inv
+            ]
+            res[version] = (
+                df.mean()
+                .loc[nai_options + [groups_inv[option] for option in nai_options_col]]
+                .rename(index=groups)
+            )
+
+        df_freq = pd.DataFrame.from_dict(res)
+        if str_pct:
+            df_freq = df_freq.applymap(lambda f: f"{100 * f:.2f}%")
+        df_freq_rename = df_freq.rename(
+            columns={col: f"freq {col}" for col in df_freq.columns}
+        )
+        return pd.concat([dataframe, df_freq_rename], axis=1).sort_index()
+
     def _keep(
         self,
         dataframe: pd.DataFrame,
@@ -469,19 +512,23 @@ class FeatureImportanceReport:
         return dataframe
 
     def _display_rank_by_version(
-        self, dataframe: pd.DataFrame, ascending: bool | None = None
+        self,
+        dataframe: pd.DataFrame,
+        ascending: bool | None = None,
+        display_merged: bool | None = False,
     ) -> pd.DataFrame:
         if dataframe.empty:
             return dataframe
+        group_col = "merged_group" if display_merged else "group"
         df = (
-            dataframe.groupby(["target", "group"])[["version", "rank"]]
+            dataframe.groupby(["target", group_col])[["version", "rank"]]
             .agg(list)
             .reset_index()
         )
         # convert to dict because it's easier to manipulate here
         split_cols = dict()
         for idx, item in df.to_dict(orient="index").items():
-            split_cols[idx] = {"options": item["group"]}
+            split_cols[idx] = {"options": item[group_col]}
             split_cols[idx].update(
                 {version: rank for version, rank in zip(item["version"], item["rank"])}
             )
@@ -517,11 +564,49 @@ class FeatureImportanceReport:
 
         return pd.DataFrame.from_dict(res)
 
+    def _add_merged_group(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        """Try to merge groups that seems related (add merged_group column)."""
+        LOG.debug("add merged_group column.")
+        by_opt = defaultdict(dict)
+        for _, row in dataframe.iterrows():
+            for option in row.group.split(", "):
+                by_opt[option][row.version] = row.group
+
+        def _rename_group(item: dict) -> str:
+            """Rename/merge groups."""
+            # nothing to merge
+            groups = set(item.values())
+            if len(groups) == 1:
+                return groups.pop()
+
+            # unique options
+            options = set(option for group in groups for option in group.split(", "))
+            # versions = set(item.keys())
+
+            item_by_opt = defaultdict(set)
+            for version, group in item.items():
+                for option in group.split(", "):
+                    item_by_opt[option].add(version)
+
+            res = list()
+            for option in sorted(options):
+                versions = item_by_opt[option]
+                if len(versions) == len(item.keys()):
+                    res.append(option)
+                else:
+                    res.append(f'{option}({", ".join(sorted(versions))})')
+            return ", ".join(res)
+
+        dataframe["merged_group"] = dataframe.option.apply(
+            lambda option: _rename_group(by_opt[option])
+        )
+        return dataframe
+
 
 if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    fir = FeatureImportanceReport(use_cache="fi_const_2022_12_21")
-    fir.target_comparison("vmlinux", "BZIP2-vmlinux", 30, True)
-    print(fir._df)
+    fir = FeatureImportanceReport(use_cache="fi_const_2023")
+    oai = fir.options_always_importants("vmlinux", merge_groups=True)
+    print(oai)
