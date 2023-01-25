@@ -592,14 +592,11 @@ class FeatureImportanceReport:
         """Try to merge groups that seems related (add merged_group column)."""
         LOG.debug("add merged_group column.")
         by_opt = defaultdict(dict)
-        by_grp = defaultdict(dict)
-
-        # for _, row in dataframe.iterrows():
-        #     for option in row.group.split(", "):
-        #         by_opt[option][row.version] = row.group
 
         for _, row in dataframe.iterrows():
             for option in row.group.split(", "):
+                if row.version in by_opt[option].keys():
+                    assert by_opt[option][row.version] == row.group
                 by_opt[option][row.version] = row.group
 
         def _rename_group(item: dict) -> str:
