@@ -23,6 +23,8 @@ from tuxai.features import CORR_PREFIX
 LOG = logging.getLogger(__name__)
 
 DEFAULT_REPORT_FILENAME = "report.xlsx"
+GROUP_COL = "group"
+MERGED_GROUPS_COL = "merged_group"
 
 
 def model_metrics(
@@ -373,12 +375,17 @@ class FeatureImportanceReport:
         rank: int = 30,
         collinearity: bool = True,
         merge_groups: bool = False,
+        allow_version_gap=True,
     ) -> pd.DataFrame:
         """Options always < top N, regardless of version."""
         df = self._df.copy()
         df = self._keep(df, targets=[target], collinearities=[collinearity])
+        group_col = GROUP_COL
         if merge_groups:
             df = self._add_merged_group(df)
+            group_col = MERGED_GROUPS_COL
+        if not allow_version_gap:
+            df = self._drop_version_gap(df, group_col=group_col)
 
         # list of top N options
         options = list()
@@ -392,7 +399,7 @@ class FeatureImportanceReport:
                 options.append(option)
 
         return self._display_rank_by_version(
-            df[df.option.isin(options)], ascending=True, display_merged=merge_groups
+            df[df.option.isin(options)], ascending=True
         )
 
     def options_never_importants(
@@ -423,24 +430,29 @@ class FeatureImportanceReport:
         best_rank: int = 30,
         worst_rank=300,
         collinearity: bool = True,
+        merge_groups: bool = False,
+        allow_version_gap=True,
     ) -> pd.DataFrame:
         """Options at least once <= best_rank and at least once >= worst_rank, regardless of version."""
         df = self._df.copy()
         df = self._keep(df, targets=[target], collinearities=[collinearity])
 
-        # list of top N options
-        # options = list()
-        # for option in tqdm(df.option.unique()):
-        #     ranks = sorted(df[df.option == option]["rank"].unique())
-        #     if ranks[0] <= best_rank and ranks[-1] >= worst_rank:
-        #         options.append(option)
+        group_col = GROUP_COL
+        if merge_groups:
+            df = self._add_merged_group(df)
+            group_col = MERGED_GROUPS_COL
+        if not allow_version_gap:
+            df = self._drop_version_gap(df, group_col=group_col)
+
         groups = list()
-        for group in tqdm(df.group.unique()):
-            ranks = sorted(df[df.group == group]["rank"].unique())
+        for group in tqdm(df[group_col].unique()):
+            ranks = sorted(df[df[group_col] == group]["rank"].unique())
             if ranks[0] <= best_rank and ranks[-1] >= worst_rank:
                 groups.append(group)
 
-        return self._display_rank_by_version(df[df.group.isin(groups)], ascending=True)
+        return self._display_rank_by_version(
+            df[df[group_col].isin(groups)], ascending=True
+        )
 
     def target_comparison(
         self, target_1: str, target_2: str, rank: int = 30, collinearity: bool = True
@@ -512,14 +524,13 @@ class FeatureImportanceReport:
         return dataframe
 
     def _display_rank_by_version(
-        self,
-        dataframe: pd.DataFrame,
-        ascending: bool | None = None,
-        display_merged: bool | None = False,
+        self, dataframe: pd.DataFrame, ascending: bool | None = None
     ) -> pd.DataFrame:
         if dataframe.empty:
             return dataframe
-        group_col = "merged_group" if display_merged else "group"
+        group_col = (
+            MERGED_GROUPS_COL if MERGED_GROUPS_COL in dataframe.columns else GROUP_COL
+        )
         df = (
             dataframe.groupby(["target", group_col])[["version", "rank"]]
             .agg(list)
@@ -564,10 +575,29 @@ class FeatureImportanceReport:
 
         return pd.DataFrame.from_dict(res)
 
+    def _drop_version_gap(
+        self, dataframe: pd.DataFrame, group_col: str
+    ) -> pd.DataFrame:
+        """Remove each options which are missing versions."""
+        LOG.debug("drop options with versions gap.")
+
+        versions = set(dataframe.version.unique())
+        # all available versions for each group of options
+        df_ver = dataframe.groupby(group_col).agg({"version": lambda x: set(x)})
+        # keep groups with all available versions
+        df_ver_no_gap = df_ver[df_ver.version.apply(lambda x: x == versions)]
+        return dataframe[dataframe[group_col].isin(df_ver_no_gap.index)]
+
     def _add_merged_group(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         """Try to merge groups that seems related (add merged_group column)."""
         LOG.debug("add merged_group column.")
         by_opt = defaultdict(dict)
+        by_grp = defaultdict(dict)
+
+        # for _, row in dataframe.iterrows():
+        #     for option in row.group.split(", "):
+        #         by_opt[option][row.version] = row.group
+
         for _, row in dataframe.iterrows():
             for option in row.group.split(", "):
                 by_opt[option][row.version] = row.group
@@ -597,7 +627,7 @@ class FeatureImportanceReport:
                     res.append(f'{option}({", ".join(sorted(versions))})')
             return ", ".join(res)
 
-        dataframe["merged_group"] = dataframe.option.apply(
+        dataframe[MERGED_GROUPS_COL] = dataframe.option.apply(
             lambda option: _rename_group(by_opt[option])
         )
         return dataframe
@@ -608,5 +638,15 @@ if __name__ == "__main__":
 
     config_logger()
     fir = FeatureImportanceReport(use_cache="fi_const_2023")
-    oai = fir.options_always_importants("vmlinux", merge_groups=True)
-    print(oai)
+    # oai = fir.options_always_importants(
+    #     "vmlinux", merge_groups=False, allow_version_gap=False
+    # )
+    nai = fir.options_not_always_importants(
+        target="vmlinux",
+        best_rank=50,
+        worst_rank=500,
+        collinearity=True,
+        merge_groups=True,
+        allow_version_gap=False,
+    ).set_index("options")
+    print(nai)
