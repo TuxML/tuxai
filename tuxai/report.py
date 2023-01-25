@@ -97,6 +97,7 @@ class Report:
         versions: list[str] | None = None,
         targets: list[str] | None = None,
         collinearities: list[bool] | None = None,
+        **kwargs,
     ) -> pd.DataFrame:
         """Generate feature importance report."""
         LOG.info("generating feature importance report")
@@ -113,6 +114,7 @@ class Report:
             versions=versions,
             targets=targets,
             collinearities=collinearities,
+            **kwargs,
         )
 
     def xgboost_model(
@@ -347,13 +349,13 @@ class Report:
 class FeatureImportanceReport:
     """Answer some preliminary feature importance questions."""
 
-    def __init__(self, use_cache: str | None = None) -> None:
+    def __init__(self, use_cache: str | None = None, **kwargs) -> None:
         """All raw data come from Report class."""
         # pick all configurations
         report = Report()
 
         if use_cache is None:
-            df = report.feature_importance()
+            df = report.feature_importance(**kwargs)
         else:
             cache_ = cache()
             if use_cache in cache_:
@@ -362,7 +364,7 @@ class FeatureImportanceReport:
                 # df = bio2df(cache_[use_cache])
                 df = cache_[use_cache]
             else:
-                df = report.feature_importance()
+                df = report.feature_importance(**kwargs)
                 # pyarrow cannot handle dicts in columns
                 # cache_[use_cache] = df2bio(df)
                 cache_[use_cache] = df
@@ -634,7 +636,7 @@ if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    fir = FeatureImportanceReport(use_cache="fi_const_2023")
+    fir = FeatureImportanceReport(use_cache="fi_const_2023_do", drop_outliers=True)
     # oai = fir.options_always_importants(
     #     "vmlinux", merge_groups=False, allow_version_gap=False
     # )

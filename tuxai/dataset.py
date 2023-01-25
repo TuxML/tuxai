@@ -6,6 +6,7 @@ import logging
 from enum import Enum, unique
 
 import pandas as pd
+import numpy as np
 from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 
@@ -47,6 +48,7 @@ class Dataset:
         return_collinear_groups: bool = False,
         add_features: bool = True,
         nb_yes_range: tuple[float, float] = (0, 1),
+        drop_outliers: bool = False,
     ) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, list[str]]]:
         """Get raw Pandas DataFrame.
 
@@ -75,6 +77,9 @@ class Dataset:
 
         if return_collinear_groups and col_filter in (Columns.targets, Columns.extra):
             LOG.warning(f"collinearity not supported for col_filter={col_filter.name}")
+
+        if drop_outliers:
+            df = self._drop_outliers(df)
 
         match col_filter:
             case Columns.all:
@@ -109,6 +114,20 @@ class Dataset:
                 if add_features:
                     self._add_features(dataframe=df, nb_yes_range=nb_yes_range)
                 return df
+
+    def _drop_outliers(
+        self, dataframe: pd.DataFrame, target: str = "vmlinux"
+    ) -> pd.DataFrame:
+        """Remove kernel size outliers from dataframe."""
+        # z-score < 3
+
+        return dataframe[
+            np.abs(
+                (dataframe[target] - dataframe[target].mean())
+                / dataframe[target].std(ddof=0)
+            )
+            < 3
+        ]
 
     def _add_features(
         self, dataframe: pd.DataFrame, nb_yes_range: tuple[float, float]
@@ -163,7 +182,8 @@ class Dataset:
 if __name__ == "__main__":
     config_logger()
     LOG.info("log test")
-    Dataset(508).get_dataframe(add_features=True, nb_yes_range=(0, 1))
+    # Dataset(508).get_dataframe(add_features=True, nb_yes_range=(0, 1))
+    Dataset(508).get_dataframe(drop_outliers=True)
 
     # precompute
     # for ver in (413, 415, 420, 500, 504, 507, 508):
