@@ -632,6 +632,43 @@ class FeatureImportanceReport:
         return dataframe
 
 
+class YesFrequencyOutliers:
+    """Detect yes/no option frequency outliers."""
+
+    def get_dataframe(self, target: str, use_fir_cache: str|None = None) -> pd.DataFrame:
+        """Dataframe with frequencies and outliers + score."""
+        fir = FeatureImportanceReport(use_cache=use_fir_cache)
+        df_ai = fir.options_always_importants(target=target, rank=99999, collinearity=True, merge_groups=False, allow_version_gap=True).set_index("options")
+        df = fir.add_yes_frequencies(df_ai, str_pct=False)
+
+        freq_cols = [col for col in df.columns if col.startswith("freq")]
+        df["outliers_score"] = df[freq_cols].apply(lambda row: self.outliers_score(row), axis=1)
+        df["outliers"] = df[freq_cols].apply(lambda row: self.detect_outliers(row), axis=1)
+
+        return df[df.outliers_score > 0.1].sort_values("outliers_score", ascending=False)
+    
+
+    def detect_outliers(self, row) -> list:
+        """List of outliers from a dataframe row."""
+        row = [i for i in row if i != np.nan]
+        q1, q3 = np.percentile(row, [25, 75])
+        iqr = q3 - q1
+        lower_bound = q1 - (1.5 * iqr)
+        upper_bound = q3 + (1.5 * iqr)
+        return [x for x in row if x < lower_bound or x > upper_bound]
+
+    def outliers_score(self, row) -> float:
+        """Quantify outlier distance."""
+        outliers = self.detect_outliers(row)
+        if not outliers:
+            return 0
+        mean = np.mean(row)
+        score = sum([abs(x - mean) for x in outliers]) / len(outliers)
+        return score
+
+    
+
+
 if __name__ == "__main__":
     from tuxai.misc import config_logger
 
