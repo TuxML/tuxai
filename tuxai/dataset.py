@@ -4,6 +4,7 @@ from pathlib import Path
 import pickle
 import logging
 from enum import Enum, unique
+import json
 
 import pandas as pd
 import numpy as np
@@ -84,7 +85,7 @@ class Dataset:
         match col_filter:
             case Columns.all:
                 df = (
-                    self._group_colinar_options(
+                    self._group_colinear_options(
                         dataframe=df,
                         threshold=collinearity_threshold,
                         return_groups=return_collinear_groups,
@@ -103,7 +104,7 @@ class Dataset:
                 options = filter_options(df.columns, config=self._config)
                 df = df[options]
                 df = (
-                    self._group_colinar_options(
+                    self._group_colinear_options(
                         dataframe=df,
                         threshold=collinearity_threshold,
                         return_groups=return_collinear_groups,
@@ -137,7 +138,7 @@ class Dataset:
         feature_engineering = FeatureEngineering(dataframe)
         return feature_engineering.add_nb_yes_feature(val_range=nb_yes_range)
 
-    def _group_colinar_options(
+    def _group_colinear_options(
         self,
         dataframe: pd.DataFrame,
         threshold: float,
@@ -178,12 +179,23 @@ class Dataset:
 
         return X_train, y_train, X_test, y_test
 
+    def raw_option_list(self) -> list[str]:
+        """Get all options (some options where filtered in serialized dataset)."""
+        LOG.debug(f"[{self._version}] loading unfiltered tristate option list")
+        json_path = (
+            Path(self._config["dataset"]["path"])
+            / f"tristate_options_{self._version}.json"
+        )
+        with open(json_path, "r") as json_file:
+            return json.load(json_file)
+
 
 if __name__ == "__main__":
     config_logger()
     LOG.info("log test")
+    print(Dataset(508).raw_option_list())
     # Dataset(508).get_dataframe(add_features=True, nb_yes_range=(0, 1))
-    Dataset(508).get_dataframe(drop_outliers=True)
+    # Dataset(508).get_dataframe(drop_outliers=True)
 
     # precompute
     # for ver in (413, 415, 420, 500, 504, 507, 508):
@@ -191,6 +203,6 @@ if __name__ == "__main__":
     #     dataset.get_dataframe()
 
     # df, groups = Dataset(508).get_dataframe(return_collinear_groups=True)
-    Dataset(508).train_test_split()
+    # Dataset(508).train_test_split()
     # print(groups)
     # dataset.filter_correlated()

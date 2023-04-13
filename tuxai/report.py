@@ -15,7 +15,7 @@ from tqdm.auto import tqdm
 from typing import Callable
 import xgboost
 
-from tuxai.misc import date2dir, get_config, cache  # , bio2df, df2bio
+from tuxai.misc import get_config, cache  # , bio2df, df2bio
 from tuxai.dataset import Dataset, Columns
 from tuxai.models import XGBoost
 from tuxai.features import CORR_PREFIX
@@ -25,6 +25,7 @@ LOG = logging.getLogger(__name__)
 DEFAULT_REPORT_FILENAME = "report.xlsx"
 GROUP_COL = "group"
 MERGED_GROUPS_COL = "merged_group"
+VMLINUX_TARGET = "vmlinux"
 
 
 def model_metrics(
@@ -79,17 +80,17 @@ def plot_pred_true(y_pred: pd.Series, y_true: pd.Series) -> Line2D:
     return fig
 
 
-class Report:
-    """Generate excel report for each version, with different options."""
+class BasicReport:
+    """Basic report for each version, target, collinearity, with different options."""
 
     def __init__(self, path: str | Path | None = None) -> None:
         """Provide a path or get generated one."""
-        self._path = (
-            Path(__file__).resolve().parent.parent
-            / "reports"
-            / date2dir()
-            / DEFAULT_REPORT_FILENAME
-        )
+        # self._path = (
+        #     Path(__file__).resolve().parent.parent
+        #     / "reports"
+        #     / date2dir()
+        #     / DEFAULT_REPORT_FILENAME
+        # )
         self._config = get_config()
 
     def feature_importance(
@@ -352,7 +353,7 @@ class FeatureImportanceReport:
     def __init__(self, use_cache: str | None = None, **kwargs) -> None:
         """All raw data come from Report class."""
         # pick all configurations
-        report = Report()
+        report = BasicReport()
 
         if use_cache is None:
             df = report.feature_importance(**kwargs)
@@ -370,6 +371,16 @@ class FeatureImportanceReport:
                 cache_[use_cache] = df
 
         self._df = self._explode_df(df)
+
+    def merged_groups(
+        self,
+        target: str,
+        collinearity: bool = True,
+    ) -> dict:
+        """Get dict of merged groups."""
+        df = self._df.copy()
+        df = self._keep(df, targets=[target], collinearities=[collinearity])
+        return self._add_merged_group(df, return_dict=True)
 
     def options_always_importants(
         self,
@@ -405,11 +416,23 @@ class FeatureImportanceReport:
         )
 
     def options_never_importants(
-        self, target: str, rank: int = 300, collinearity: bool = True
+        self,
+        target: str,
+        rank: int = 300,
+        collinearity: bool = True,
+        merge_groups: bool = False,
+        allow_version_gap=True,
     ) -> pd.DataFrame:
         """Options always > top N, regardless of version."""
         df = self._df.copy()
         df = self._keep(df, targets=[target], collinearities=[collinearity])
+
+        group_col = GROUP_COL
+        if merge_groups:
+            df = self._add_merged_group(df)
+            group_col = MERGED_GROUPS_COL
+        if not allow_version_gap:
+            df = self._drop_version_gap(df, group_col=group_col)
 
         # list of worst N options
         options = list()
@@ -478,29 +501,41 @@ class FeatureImportanceReport:
         return {f"always top {rank}": oai}
 
     def add_yes_frequencies(
-        self, dataframe: pd.DataFrame, str_pct: bool = False
+        self, dataframe: pd.DataFrame, str_pct: bool = False, collinearity: bool = True
     ) -> pd.DataFrame:
         """Add yes/(yes+no) on all features for each version."""
         res = dict()
         for version in tqdm(dataframe.columns):
-            df, groups = Dataset(version).get_dataframe(
-                add_features=False,
-                col_filter=Columns.options,
-                group_collinear_options=True,
-                return_collinear_groups=True,
-            )
-            groups = {k: ", ".join(sorted(v)) for k, v in groups.items()}
-            groups_inv = {v: k for k, v in groups.items()}
+            if collinearity:
+                df, groups = Dataset(version).get_dataframe(
+                    add_features=False,
+                    col_filter=Columns.options,
+                    group_collinear_options=True,
+                    return_collinear_groups=True,
+                )
+                groups = {k: ", ".join(sorted(v)) for k, v in groups.items()}
+                groups_inv = {v: k for k, v in groups.items()}
+            else:
+                df = Dataset(version).get_dataframe(
+                    add_features=False,
+                    col_filter=Columns.options,
+                    group_collinear_options=False,
+                    return_collinear_groups=False,
+                )
 
             nai_options = [option for option in dataframe.index if option in df.columns]
-            nai_options_col = [
-                option for option in dataframe.index if option in groups_inv
-            ]
-            res[version] = (
-                df.mean()
-                .loc[nai_options + [groups_inv[option] for option in nai_options_col]]
-                .rename(index=groups)
+            nai_options_col = (
+                [option for option in dataframe.index if option in groups_inv]
+                if collinearity
+                else []
             )
+
+            nai_df = df.mean().loc[
+                nai_options + [groups_inv[option] for option in nai_options_col]
+            ]
+            if collinearity:
+                nai_df = nai_df.rename(index=groups)
+            res[version] = nai_df
 
         df_freq = pd.DataFrame.from_dict(res)
         if str_pct:
@@ -590,7 +625,9 @@ class FeatureImportanceReport:
         df_ver_no_gap = df_ver[df_ver.version.apply(lambda x: x == versions)]
         return dataframe[dataframe[group_col].isin(df_ver_no_gap.index)]
 
-    def _add_merged_group(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+    def _add_merged_group(
+        self, dataframe: pd.DataFrame, return_dict: bool = False
+    ) -> pd.DataFrame | dict:
         """Try to merge groups that seems related (add merged_group column)."""
         LOG.debug("add merged_group column.")
         by_opt = defaultdict(dict)
@@ -626,27 +663,51 @@ class FeatureImportanceReport:
                     res.append(f'{option}({", ".join(sorted(versions))})')
             return ", ".join(res)
 
-        dataframe[MERGED_GROUPS_COL] = dataframe.option.apply(
-            lambda option: _rename_group(by_opt[option])
-        )
-        return dataframe
+        if return_dict:
+            return {
+                option: _rename_group(by_opt[option]) for option in dataframe.option
+            }
+        else:
+            dataframe[MERGED_GROUPS_COL] = dataframe.option.apply(
+                lambda option: _rename_group(by_opt[option])
+            )
+            return dataframe
+
+    # def get_merged_groups(self, dataf)
 
 
 class YesFrequencyOutliers:
     """Detect yes/no option frequency outliers."""
 
-    def get_dataframe(self, target: str, use_fir_cache: str|None = None) -> pd.DataFrame:
+    def get_dataframe(
+        self,
+        target: str,
+        use_fir_cache: str | None = None,
+        threshold: float = 0.1,
+        collinearity: bool = True,
+    ) -> pd.DataFrame:
         """Dataframe with frequencies and outliers + score."""
         fir = FeatureImportanceReport(use_cache=use_fir_cache)
-        df_ai = fir.options_always_importants(target=target, rank=99999, collinearity=True, merge_groups=False, allow_version_gap=True).set_index("options")
+        df_ai = fir.options_always_importants(
+            target=target,
+            rank=99999,
+            collinearity=True,
+            merge_groups=False,
+            allow_version_gap=True,
+        ).set_index("options")
         df = fir.add_yes_frequencies(df_ai, str_pct=False)
 
         freq_cols = [col for col in df.columns if col.startswith("freq")]
-        df["outliers_score"] = df[freq_cols].apply(lambda row: self.outliers_score(row), axis=1)
-        df["outliers"] = df[freq_cols].apply(lambda row: self.detect_outliers(row), axis=1)
+        df["outliers_score"] = df[freq_cols].apply(
+            lambda row: self.outliers_score(row), axis=1
+        )
+        df["outliers"] = df[freq_cols].apply(
+            lambda row: self.detect_outliers(row), axis=1
+        )
 
-        return df[df.outliers_score > 0.1].sort_values("outliers_score", ascending=False)
-    
+        return df[df.outliers_score >= threshold].sort_values(
+            "outliers_score", ascending=False
+        )
 
     def detect_outliers(self, row) -> list:
         """List of outliers from a dataframe row."""
@@ -666,23 +727,434 @@ class YesFrequencyOutliers:
         score = sum([abs(x - mean) for x in outliers]) / len(outliers)
         return score
 
-    
+
+class FeatureSizeImpact:
+    """Positive and negative feature impact on kernel size."""
+
+    def __init__(self) -> None:
+        """Cache and config."""
+        self._cache = cache()
+        self._config = get_config()
+
+    def get_mean_sizes_dataframe(self, version: str, target: str) -> pd.DataFrame:
+        """Dataframe presentation for options mean sizes by value."""
+        return pd.DataFrame.from_dict(
+            self._get_mean_size_by_value(version=version, target=target), orient="index"
+        ).sort_values("diff", ascending=False)
+
+    def plot_mean_sizes(self, version: str, target: str, count: int = 20) -> None:
+        """Plot mean sizes."""
+        plt.figure(figsize=(10, 10))
+        df = self.get_mean_sizes_dataframe(version=version, target=target)
+        df_more = df.head(count)
+        df_less = df.tail(count)
+
+        plt.subplot(2, 1, 1)
+
+        plt.title("version")
+
+        sns.set_color_codes("muted")
+        sns.barplot(df_more, y=df_more.index, x="yes", color="r")
+        sns.set_color_codes("pastel")
+        sns.barplot(df_more, y=df_more.index, x="no", color="b")
+        plt.title("Bigger")
+
+        plt.subplot(2, 1, 2)
+        sns.set_color_codes("pastel")
+        sns.barplot(df_less, y=df_less.index, x="no", color="r")
+        sns.set_color_codes("muted")
+        sns.barplot(df_less, y=df_less.index, x="yes", color="b")
+        plt.title("Smaller")
+        plt.show()
+
+    def _get_mean_size_by_value(self, version: str, target: str) -> dict:
+        """Get mean sizes for yes, no (and diff)."""
+        key = f"size_diffs_dict_{version}_{target}."
+        if key in self._cache:
+            return self._cache[key]
+        else:
+            df, groups = Dataset(version).get_dataframe(
+                Columns.options, return_collinear_groups=True, add_features=False
+            )
+            features = df.columns
+            df[target] = Dataset(version).get_dataframe(Columns.targets)[target]
+            sizes = dict()
+            for feature in tqdm(features):
+                try:
+                    yes_size = df[df[feature]][target].mean()
+                    no_size = df[~df[feature]][target].mean()
+                    group = ", ".join(groups[feature]) if feature in groups else feature
+                    sizes[group] = {
+                        "yes": yes_size,
+                        "no": no_size,
+                        "diff": yes_size - no_size,
+                    }
+                except KeyError:
+                    LOG.debug(f"not an original feature, skip: {feature}")
+            self._cache[key] = sizes
+            return sizes
+
+
+class OverviewReport:
+    """All other reports and more."""
+
+    def __init__(
+        self,
+        versions: list[str] | None = None,
+        targets: list[str] | None = None,
+        fir_cache: str | None = None,
+    ) -> None:
+        """Get data for all features once."""
+        self._config = get_config()
+
+        self._versions = versions if versions else self._config["report"]["versions"]
+        self._versions_p = [
+            f"{str(version)[:1]}.{str(version)[1:]}" for version in self._versions
+        ]
+        self._targets = targets if targets else self._config["report"]["targets"]
+
+        ## debug
+        c = cache()
+
+        # self._missing_options = self._get_missing_options()
+        # self._ranks_and_yes_frequencies = self._get_ranks_and_yes_frequencies(
+        #     fir_cache=fir_cache
+        # )
+        # self._groups = self._get_groups(fir_cache=fir_cache)
+        # c["missing_options"] = self._missing_options
+        # c["ryf"] = self._ranks_and_yes_frequencies
+        # c["groups"] = self._groups
+
+        self._missing_options = c["missing_options"]
+        self._ranks_and_yes_frequencies = c["ryf"]
+        self._groups = c["groups"]
+
+        ## /debug
+
+    def __getitem__(self, option: str):
+        """Get available data for this option."""
+        compressed_target = self._config["report"]["unique_compressed_target"]
+        versions = self._config["report"]["versions"]
+        ranks_yes_vmlinux = self._ranks_and_yes_frequencies[VMLINUX_TARGET].loc[option]
+        ranks_yes_comp = self._ranks_and_yes_frequencies[compressed_target].loc[option]
+
+        missing_in_dataset = [
+            version
+            for version, options in self._missing_options.items()
+            if option in options
+        ]
+        # TODO: outliers
+        # TODO: feature impact
+        rank_i = len(versions)
+        freq_i = 2 * len(versions)
+        item_data = {
+            "option": option,
+            "missing_in_dataset": missing_in_dataset,
+            "collinear_groups": self._groups["collinear_groups"].get(option, []),
+            "merged_groups": self._groups["merged_groups"].get(option, option),
+            "ranks": {
+                "uncomp": {
+                    version: value
+                    for version, value in dict(ranks_yes_vmlinux.iloc[:rank_i]).items()
+                    if isinstance(value, float)
+                },
+                "comp": {
+                    version: value
+                    for version, value in dict(ranks_yes_comp.iloc[:rank_i]).items()
+                    if isinstance(value, float)
+                },
+            },
+            "yes_freq": {
+                "uncomp": {
+                    version: value
+                    for version, value in dict(
+                        ranks_yes_vmlinux.iloc[rank_i:freq_i]
+                    ).items()
+                    if isinstance(value, float)
+                },
+                "comp": {
+                    version: value
+                    for version, value in dict(
+                        ranks_yes_comp.iloc[rank_i:freq_i]
+                    ).items()
+                    if isinstance(value, float)
+                },
+            },
+        }
+        return self._analysis(item_data)
+
+    def _analysis(self, item: dict) -> dict:
+        """Analyse collected data for a single option."""
+
+        def detect_outliers(ver_dict: dict[str, float]) -> dict[str, float]:
+            """List of outliers from a dict: returns version(s)."""
+            # row = [i for i in row if i != np.nan]
+            q1, q3 = np.percentile(list(ver_dict.values()), [25, 75])
+            iqr = q3 - q1
+            lower_bound = q1 - (1.5 * iqr)
+            upper_bound = q3 + (1.5 * iqr)
+            return {
+                ver: val
+                for ver, val in ver_dict.items()
+                if val < lower_bound or val > upper_bound
+            }
+
+        def outliers_and_score(ver_dict: dict[str, float]) -> tuple[list[float], float]:
+            """Quantify outlier distance."""
+            outliers = detect_outliers(ver_dict)
+            if not outliers:
+                return outliers, 0.0
+            mean = np.mean(list(ver_dict.values()))
+            score = sum([abs(val - mean) for val in outliers.values()]) / len(outliers)
+            return outliers, score
+
+        def clean_ver_dict(ver_dict: dict[str, float | int]) -> dict[str, float | int]:
+            """Clean key/values."""
+            return {
+                version.replace("freq ", ""): (
+                    round(value, 4) if version.startswith("freq") else int(value)
+                )
+                for version, value in ver_dict.items()
+            }
+
+        def ver_stats(ver_dict: dict[str, float | int]) -> dict:
+            ver_dict_ = clean_ver_dict(ver_dict)
+            min_value = min(ver_dict_.values())
+            max_value = max(ver_dict_.values())
+            outliers, outliers_score = outliers_and_score(ver_dict_)
+            return {
+                "min": {
+                    "value": min_value,
+                    "versions": [
+                        version
+                        for version, value in ver_dict_.items()
+                        if value == min_value
+                    ],
+                },
+                "max": {
+                    "value": max_value,
+                    "versions": [
+                        version
+                        for version, value in ver_dict_.items()
+                        if value == max_value
+                    ],
+                },
+                "outliers": outliers,
+                "outliers_score": outliers_score,
+            }
+
+        ana_res = dict()
+        raw_res = dict()
+        # ranks and yes freq
+        for data in ("ranks", "yes_freq"):
+            raw_res[data] = dict()
+            for target in ("comp", "uncomp"):
+                raw_res[data][target] = ver_stats(item[data][target])
+                raw_res[data][target]["all"] = clean_ver_dict(item[data][target])
+
+        # remaining
+        for key in (
+            "missing_in_dataset",
+            "missing_version",
+            "collinear_groups",
+            "merged_groups",
+        ):
+            if key in item:
+                raw_res[key] = item[key]
+
+        # analysis
+        ana_score = 0
+
+        # missing data
+        if raw_res["missing_in_dataset"]:
+            ana_res[
+                "missing_dataset"
+            ] = f"Version(s) removed from dataset: {', '.join(raw_res['missing_in_dataset'])}"
+
+        ver_diff = set(self._versions_p) - set(item["ranks"]["uncomp"].keys())
+        if raw_res["missing_in_dataset"]:
+            ver_diff -= set(raw_res["missing_in_dataset"])
+        if ver_diff:
+            ana_res[
+                "missing_version"
+            ] = f"Missing in versions: {', '.join(sorted(ver_diff))}"
+
+        # groups
+        if raw_res["collinear_groups"]:
+            ana_res[
+                "collinear_groups"
+            ] = f"Collinear options: {raw_res['collinear_groups']}"
+
+        if raw_res["merged_groups"] != item["option"]:
+            ana_res[
+                "merged_groups"
+            ] = f"Collinearity across versions: {raw_res['merged_groups']}"
+
+        # common rank/yes freq analysis
+        for data in ("ranks", "yes_freq"):
+            for target in ("comp", "uncomp"):
+                dt_item = raw_res[data][target]
+                min_str = f"min: {dt_item['min']['value']} ({', '.join(dt_item['min']['versions'])})"
+                max_str = f"max: {dt_item['max']['value']} ({', '.join(dt_item['max']['versions'])})"
+                out_str = (
+                    f"{', '.join(str(val) for val in dt_item['outliers'].values())} "
+                )
+                out_str += f"({', '.join(sorted(dt_item['outliers'].keys()))})"
+                dt_str = ""
+                if dt_item["outliers"]:
+                    dt_str = f"Outlier found: {out_str}. "
+                dt_str += f"{min_str}, {max_str}"
+                ana_res[f"{data}-{target}"] = dt_str
+
+        # yes freq analysis
+        threshold = self._config["report"]["yes_freq_threshold"]
+        for target in ("comp", "uncomp"):
+            # dt_item = raw_res["yes_freq"][target]
+            if thr_freq := {
+                version: freq
+                for version, freq in raw_res["yes_freq"][target]["all"].items()
+                if freq < threshold or freq > (1 - threshold)
+            }:
+                hf_str = ", ".join(
+                    [
+                        f"{'YES' if freq > 0.5 else 'NO'}: {100 * (freq if freq > 0.5 else 1 - freq):.2f}% ({version})"
+                        for version, freq in thr_freq.items()
+                    ]
+                )
+                ana_res[
+                    f"yes_freq-{target}-high frequency"
+                ] = f"High frequency: {hf_str}"
+
+        return {"option": item["option"], "raw": raw_res, "analysis": ana_res}
+
+    def _get_groups(self, fir_cache: str) -> dict[str, list[str]]:
+        """Get options groups and similarities."""
+        colls = dict()
+        fir = FeatureImportanceReport(use_cache=fir_cache)
+        merged_groups = fir.merged_groups(target=VMLINUX_TARGET, collinearity=True)
+        for version in self._versions:
+
+            # df_ai = fir.options_always_importants(
+            #     target=VMLINUX_TARGET,
+            #     rank=999999,
+            #     collinearity=True,
+            #     merge_groups=True,
+            #     allow_version_gap=True,
+            # ).set_index("options")
+
+            ds = Dataset(version)
+            _, coll = ds.get_dataframe(
+                Columns.options,
+                group_collinear_options=True,
+                add_features=False,
+                return_collinear_groups=True,
+            )
+            vcolls = dict()
+            for options in coll.values():
+                for option in options:
+                    vcolls[option] = options
+            colls[version] = vcolls
+        return {"merged_groups": merged_groups, "collinear_groups": colls}
+
+    def _get_missing_options(self) -> dict[str, list[str]]:
+        """List of missing options for each target."""
+        res = dict()
+        for version in self._versions:
+            ds = Dataset(version)
+            df_options = ds.get_dataframe(
+                Columns.options, group_collinear_options=False, add_features=False
+            ).columns
+            all_options = ds.raw_option_list()
+
+            res[str(version / 100)] = list(set(all_options) - set(df_options))
+        return res
+
+    def _get_ranks_and_yes_frequencies_deprecated(
+        self, fir_cache: str
+    ) -> dict[str, pd.DataFrame]:
+        """Get all ranks and frequencies."""
+        # fir = FeatureImportanceReport(use_cache=fir_cache)
+        yfo = YesFrequencyOutliers()
+        res = dict()
+        for target in self._targets:
+            res[target] = yfo.get_dataframe(
+                target=target, use_fir_cache=fir_cache, threshold=0.0
+            )
+            # df_ai = fir.options_always_importants(
+            #     target=target,
+            #     rank=999999,
+            #     collinearity=True,
+            #     merge_groups=True,
+            #     allow_version_gap=True,
+            # ).set_index("options")
+            # res[target] = fir.add_yes_frequencies(df_ai, str_pct=False)
+        return res
+
+    def _get_ranks_and_yes_frequencies(self, fir_cache: str) -> dict[str, pd.DataFrame]:
+        """Get all ranks and frequencies."""
+        res = dict()
+        fir = FeatureImportanceReport(use_cache=fir_cache)
+        for target in self._targets:
+            df_ai = fir.options_always_importants(
+                target=target,
+                rank=99999,
+                collinearity=False,
+                merge_groups=False,
+                allow_version_gap=True,
+            ).set_index("options")
+            df = fir.add_yes_frequencies(df_ai, str_pct=False, collinearity=False)
+
+            freq_cols = [col for col in df.columns if col.startswith("freq")]
+            df["outliers_score"] = df[freq_cols].apply(
+                lambda row: self._outliers_score(row), axis=1
+            )
+            res[target] = df
+
+        return res
+
+    def _detect_outliers(self, row) -> list:
+        """List of outliers from a dataframe row."""
+        row = [i for i in row if i != np.nan]
+        q1, q3 = np.percentile(row, [25, 75])
+        iqr = q3 - q1
+        lower_bound = q1 - (1.5 * iqr)
+        upper_bound = q3 + (1.5 * iqr)
+        return [x for x in row if x < lower_bound or x > upper_bound]
+
+    def _outliers_score(self, row) -> float:
+        """Quantify outlier distance."""
+        outliers = self._detect_outliers(row)
+        if not outliers:
+            return 0
+        mean = np.mean(row)
+        score = sum([abs(x - mean) for x in outliers]) / len(outliers)
+        return score
 
 
 if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
-    fir = FeatureImportanceReport(use_cache="fi_const_2023_do", drop_outliers=True)
-    # oai = fir.options_always_importants(
-    #     "vmlinux", merge_groups=False, allow_version_gap=False
-    # )
-    nai = fir.options_not_always_importants(
-        target="vmlinux",
-        best_rank=50,
-        worst_rank=500,
-        collinearity=True,
-        merge_groups=True,
-        allow_version_gap=False,
-    ).set_index("options")
-    print(nai)
+    orep = OverviewReport(fir_cache="fi_const_2023")
+    orep["UBSAN_NULL"]
+    orep["KASAN"]
+    orep["CC_OPTIMIZE_FOR_SIZE"]
+
+    # fsi = FeatureSizeImpact()
+    # for version in tqdm(get_config()["report"]["versions"]):
+    #     for target in ("vmlinux", "XZ"):
+    #         fsi.get_mean_sizes_dataframe(version=version, target=target)
+
+    # fir = FeatureImportanceReport(use_cache="fi_const_2023_do", drop_outliers=True)
+    # # oai = fir.options_always_importants(
+    # #     "vmlinux", merge_groups=False, allow_version_gap=False
+    # # )
+    # nai = fir.options_not_always_importants(
+    #     target="vmlinux",
+    #     best_rank=50,
+    #     worst_rank=500,
+    #     collinearity=True,
+    #     merge_groups=True,
+    #     allow_version_gap=False,
+    # ).set_index("options")
+    # print(nai)
