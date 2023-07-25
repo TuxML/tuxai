@@ -4,6 +4,7 @@ from pathlib import Path
 import logging
 from itertools import combinations, product
 from collections import defaultdict
+from enum import Enum, unique, auto
 
 import numpy as np
 from sklearn import metrics
@@ -26,6 +27,30 @@ DEFAULT_REPORT_FILENAME = "report.xlsx"
 GROUP_COL = "group"
 MERGED_GROUPS_COL = "merged_group"
 VMLINUX_TARGET = "vmlinux"
+
+
+@unique
+class Analysis(Enum):
+    """Second step analysis."""
+
+    option = auto()
+    missing_datasets = auto()
+    missing_versions = auto()
+    collinear_groups = auto()
+    merged_groups = auto()
+    ranks = auto()
+    yes_ranks = auto()
+    yes_frequencies = auto()
+    frequencies = auto()
+    size_impact = auto()
+
+
+@unique
+class Target(Enum):
+    """Analysis targets."""
+
+    compressed = auto()
+    uncompressed = auto()
 
 
 def model_metrics(
@@ -824,10 +849,12 @@ class OverviewReport:
         # c["missing_options"] = self._missing_options
         # c["ryf"] = self._ranks_and_yes_frequencies
         # c["groups"] = self._groups
+        c["fsi"] = self._get_feature_size_impact()
 
         self._missing_options = c["missing_options"]
         self._ranks_and_yes_frequencies = c["ryf"]
         self._groups = c["groups"]
+        self._feature_size_impact = c["fsi"]
 
         ## /debug
 
@@ -848,31 +875,31 @@ class OverviewReport:
         rank_i = len(versions)
         freq_i = 2 * len(versions)
         item_data = {
-            "option": option,
-            "missing_in_dataset": missing_in_dataset,
-            "collinear_groups": self._groups["collinear_groups"].get(option, []),
-            "merged_groups": self._groups["merged_groups"].get(option, option),
-            "ranks": {
-                "uncomp": {
+            Analysis.option: option,
+            Analysis.missing_datasets: missing_in_dataset,
+            Analysis.collinear_groups: self._groups["collinear_groups"].get(option, []),
+            Analysis.merged_groups: self._groups["merged_groups"].get(option, option),
+            Analysis.ranks: {
+                Target.uncompressed: {
                     version: value
                     for version, value in dict(ranks_yes_vmlinux.iloc[:rank_i]).items()
                     if isinstance(value, float)
                 },
-                "comp": {
+                Target.compressed: {
                     version: value
                     for version, value in dict(ranks_yes_comp.iloc[:rank_i]).items()
                     if isinstance(value, float)
                 },
             },
-            "yes_freq": {
-                "uncomp": {
+            Analysis.yes_frequencies: {
+                Target.uncompressed: {
                     version: value
                     for version, value in dict(
                         ranks_yes_vmlinux.iloc[rank_i:freq_i]
                     ).items()
                     if isinstance(value, float)
                 },
-                "comp": {
+                Target.compressed: {
                     version: value
                     for version, value in dict(
                         ranks_yes_comp.iloc[rank_i:freq_i]
@@ -880,11 +907,42 @@ class OverviewReport:
                     if isinstance(value, float)
                 },
             },
+            Analysis.size_impact: {
+                Target.uncompressed: self._feature_size_impact[option][VMLINUX_TARGET],
+                Target.compressed: self._feature_size_impact[option][compressed_target],
+            },
         }
-        return self._analysis(item_data)
+        item_analysis = self._analysis(item_data)
+        item_analysis["basic_text"] = self._basic_analysis_to_text(
+            item_analysis["analysis"]
+        )
+        item_analysis["extended_text"] = self._extended_analysis_to_text(
+            item_analysis["analysis"]
+        )
+
+        return item_analysis
+
+    def _basic_analysis_to_text(self, item: dict) -> str:
+        """Explain analysis in plain text."""
+        si = item[Analysis.size_impact][Target.uncompressed]
+        txt = f"This option {'add' if si['mean_diff'] >= 0 else 'remove'} "
+        txt += f"{abs(si['mean_diff']):.1f} mb ({abs(si['mean_ratio_perc']):.1f}%) to kernel size."
+        return txt
+
+    def _extended_analysis_to_text(self, item: dict) -> dict:
+        """Explain analysis in plain text."""
+        si = item[Analysis.size_impact][Target.uncompressed]
+        txt = f"This option {'add' if si['mean_diff'] >= 0 else 'remove'} "
+        txt += f"{abs(si['mean_diff']):.1f} mb ({abs(si['mean_ratio_perc']):.1f}%) to uncompressed kernel size."
+        if Analysis.frequencies in item:
+
+            # TODO : add more text (2nd)
+            if Analysis.yes_frequencies in item[Analysis.frequencies]:
+                yfa = item[Analysis.frequencies][Analysis.yes_frequencies]
+                txt += "\n[WARNING]"
 
     def _analysis(self, item: dict) -> dict:
-        """Analyse collected data for a single option."""
+        """Analyse collected data for a single option. The result will be converted to plain text later."""
 
         def detect_outliers(ver_dict: dict[str, float]) -> dict[str, float]:
             """List of outliers from a dict: returns version(s)."""
@@ -946,18 +1004,18 @@ class OverviewReport:
         ana_res = dict()
         raw_res = dict()
         # ranks and yes freq
-        for data in ("ranks", "yes_freq"):
+        for data in (Analysis.ranks, Analysis.yes_frequencies):
             raw_res[data] = dict()
-            for target in ("comp", "uncomp"):
+            for target in (Target.compressed, Target.uncompressed):
                 raw_res[data][target] = ver_stats(item[data][target])
                 raw_res[data][target]["all"] = clean_ver_dict(item[data][target])
 
         # remaining
         for key in (
-            "missing_in_dataset",
-            "missing_version",
-            "collinear_groups",
-            "merged_groups",
+            Analysis.missing_datasets,
+            Analysis.missing_versions,
+            Analysis.collinear_groups,
+            Analysis.merged_groups,
         ):
             if key in item:
                 raw_res[key] = item[key]
@@ -966,66 +1024,71 @@ class OverviewReport:
         ana_score = 0
 
         # missing data
-        if raw_res["missing_in_dataset"]:
-            ana_res[
-                "missing_dataset"
-            ] = f"Version(s) removed from dataset: {', '.join(raw_res['missing_in_dataset'])}"
+        if raw_res[Analysis.missing_datasets]:
+            ana_res[Analysis.missing_datasets] = sorted(
+                raw_res[Analysis.missing_datasets]
+            )
 
-        ver_diff = set(self._versions_p) - set(item["ranks"]["uncomp"].keys())
-        if raw_res["missing_in_dataset"]:
-            ver_diff -= set(raw_res["missing_in_dataset"])
+        ver_diff = set(self._versions_p) - set(
+            item[Analysis.ranks][Target.uncompressed].keys()
+        )
+        if raw_res[Analysis.missing_datasets]:
+            ver_diff -= set(raw_res[Analysis.missing_datasets])
         if ver_diff:
-            ana_res[
-                "missing_version"
-            ] = f"Missing in versions: {', '.join(sorted(ver_diff))}"
+            ana_res[Analysis.missing_versions] = sorted(ver_diff)
 
         # groups
-        if raw_res["collinear_groups"]:
-            ana_res[
-                "collinear_groups"
-            ] = f"Collinear options: {raw_res['collinear_groups']}"
+        if raw_res[Analysis.collinear_groups]:
+            ana_res[Analysis.collinear_groups] = raw_res[Analysis.collinear_groups]
 
-        if raw_res["merged_groups"] != item["option"]:
-            ana_res[
-                "merged_groups"
-            ] = f"Collinearity across versions: {raw_res['merged_groups']}"
+        if raw_res[Analysis.merged_groups] != item[Analysis.option]:
+            ana_res[Analysis.merged_groups] = raw_res[Analysis.merged_groups]
 
         # common rank/yes freq analysis
-        for data in ("ranks", "yes_freq"):
-            for target in ("comp", "uncomp"):
+        for data in (Analysis.ranks, Analysis.yes_frequencies):
+            for target in (Target.compressed, Target.uncompressed):
                 dt_item = raw_res[data][target]
-                min_str = f"min: {dt_item['min']['value']} ({', '.join(dt_item['min']['versions'])})"
-                max_str = f"max: {dt_item['max']['value']} ({', '.join(dt_item['max']['versions'])})"
-                out_str = (
-                    f"{', '.join(str(val) for val in dt_item['outliers'].values())} "
-                )
-                out_str += f"({', '.join(sorted(dt_item['outliers'].keys()))})"
-                dt_str = ""
                 if dt_item["outliers"]:
-                    dt_str = f"Outlier found: {out_str}. "
-                dt_str += f"{min_str}, {max_str}"
-                ana_res[f"{data}-{target}"] = dt_str
+                    if Analysis.frequencies not in ana_res:
+                        ana_res[Analysis.frequencies] = dict()
+                    ana_res[Analysis.frequencies][(data, target)] = dt_item
 
         # yes freq analysis
         threshold = self._config["report"]["yes_freq_threshold"]
-        for target in ("comp", "uncomp"):
-            # dt_item = raw_res["yes_freq"][target]
+        for target in (Target.compressed, Target.uncompressed):
             if thr_freq := {
-                version: freq
-                for version, freq in raw_res["yes_freq"][target]["all"].items()
+                version: {
+                    "frequency": 100 * (freq if freq > 0.5 else 1 - freq),
+                    "value": "YES" if freq > 0.5 else "NO",
+                }
+                for version, freq in raw_res[Analysis.yes_frequencies][target][
+                    "all"
+                ].items()
                 if freq < threshold or freq > (1 - threshold)
             }:
-                hf_str = ", ".join(
-                    [
-                        f"{'YES' if freq > 0.5 else 'NO'}: {100 * (freq if freq > 0.5 else 1 - freq):.2f}% ({version})"
-                        for version, freq in thr_freq.items()
-                    ]
-                )
-                ana_res[
-                    f"yes_freq-{target}-high frequency"
-                ] = f"High frequency: {hf_str}"
+                if Analysis.yes_frequencies not in ana_res:
+                    ana_res[Analysis.yes_frequencies] = dict()
+                ana_res[Analysis.yes_frequencies][target] = thr_freq
 
-        return {"option": item["option"], "raw": raw_res, "analysis": ana_res}
+        # impact on size
+        ana_res[Analysis.size_impact] = dict()
+        for target in (Target.compressed, Target.uncompressed):
+            # TODO : add metrics
+            yes_sum = sum(
+                impact["yes"] for impact in item[Analysis.size_impact][target].values()
+            )
+            no_sum = sum(
+                impact["no"] for impact in item[Analysis.size_impact][target].values()
+            )
+            mean_ratio_perc = 100 * (yes_sum - no_sum) / (yes_sum + no_sum)
+            mean_diff = yes_sum - no_sum
+
+            ana_res[Analysis.size_impact][target] = {
+                "mean_ratio_perc": mean_ratio_perc,
+                "mean_diff": mean_diff,
+            }
+
+        return {"option": item[Analysis.option], "raw": raw_res, "analysis": ana_res}
 
     def _get_groups(self, fir_cache: str) -> dict[str, list[str]]:
         """Get options groups and similarities."""
@@ -1130,15 +1193,35 @@ class OverviewReport:
         score = sum([abs(x - mean) for x in outliers]) / len(outliers)
         return score
 
+    def _get_feature_size_impact(self) -> dict:
+        """Feature impact for each version and target."""
+        fsi = FeatureSizeImpact()
+        res = dict()
+        for version in self._versions:
+            for target in self._targets:
+                for option, ynd in (
+                    fsi.get_mean_sizes_dataframe(version=version, target=target)
+                    .to_dict(orient="index")
+                    .items()
+                ):
+                    if option not in res:
+                        res[option] = dict()
+                    if target not in res[option]:
+                        res[option][target] = dict()
+                    res[option][target][version] = ynd
+
+        return res
+
 
 if __name__ == "__main__":
     from tuxai.misc import config_logger
 
     config_logger()
     orep = OverviewReport(fir_cache="fi_const_2023")
-    orep["UBSAN_NULL"]
-    orep["KASAN"]
     orep["CC_OPTIMIZE_FOR_SIZE"]
+    # orep["DEBUG_RWSEMS"]
+    # orep["UBSAN_NULL"]
+    # orep["KASAN"]
 
     # fsi = FeatureSizeImpact()
     # for version in tqdm(get_config()["report"]["versions"]):
