@@ -5,6 +5,9 @@
     path = "/data/tuxai/cache"
     size_limit = 20e9
 
+[kernel]
+    path = "/data/tuxai/kernel"
+
 [dataframe]
     targets = [
         "vmlinux",
