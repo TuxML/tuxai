@@ -8,7 +8,8 @@ import tarfile
 import os
 from collections import defaultdict
 
-from tuxai.misc import get_config
+from tuxai.misc import get_config, config_logger
+from tuxai.report import OverviewReport
 
 
 KERNEL_TAR_URL = "https://git.kernel.org/torvalds/t/linux-$version.tar.gz"
@@ -34,7 +35,7 @@ class KernelDocumentation:
         self._download()
 
     def _version_format(self, version: str | float | int) -> str:
-        """Version format"""
+        """Version format."""
         version = str(version)
         version = version if "." in version else f"{version[0]}.{version[1:]}"
         return version
@@ -56,6 +57,21 @@ class KernelDocumentation:
                     "help": self._extract_help_section(option_content)
                 }
         return merged_options
+
+    def get_html_options_page(
+        self,
+        fir_cache: str | None = None,
+    ) -> str:
+        """Generate file."""
+        ovp = OverviewReport(fir_cache=fir_cache)
+        for option, kconfig in self.get_merged_kconfig_options().items():
+            try:
+                if option in ovp:
+                    data = ovp[option]
+                else:
+                    data = {}
+            except:
+                pass
 
     def _download(self) -> None:
         """Download and extract kernel."""
@@ -91,11 +107,23 @@ class KernelDocumentation:
         # pattern = r"\n\thelp([A-Z_]+)\n(.*?)\n\n"
         # matches = re.findall(pattern, content, re.DOTALL)
         # return {match[0]: match[1].strip() for match in matches}
+        def _search_list(lst: list) -> int:
+            """Search "help" in list."""
+            for i, item in enumerate(lst):
+                if "help" in item and len(item) < 12:  # could be ---help---
+                    return i + 1
+            return -1
+
         lines = [line.strip() for line in content.split("\n")]
-        if "help" in lines:
-            help_index = lines.index("help") + 1
+        if (help_index := _search_list(lines)) > 0:
             return " ".join(lines[help_index:])
         return ""
+
+        # lines = [line.strip() for line in content.split("\n")]
+        # if "help" in lines:
+        #     help_index = lines.index("help") + 1
+        #     return " ".join(lines[help_index:])
+        # return ""
 
     def _parse_options(self, content: str) -> dict[str, str]:
         """Parse extracted text and store in dictionnary."""
@@ -105,12 +133,17 @@ class KernelDocumentation:
 
 
 if __name__ == "__main__":
+    config_logger()
     kd = KernelDocumentation(version=413)
     d = kd.get_merged_kconfig_options()
     print(d)
-    d["DEBUG_RWSEMS"]
-    d["UBSAN_NULL"]
+    # d["DEBUG_RWSEMS"]
+    # d["UBSAN_NULL"]
     d["KASAN"]
+    {k: v for k, v in d.items() if len(v) > 1}
+
+    kd.get_html_options_page(fir_cache="fi_const_2023")
+
     # options = kd._get_merged_kconfig_options()
     # content = kd._get_page_content("Kconfig.debug")
     # options = kd._parse_options(content)

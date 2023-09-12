@@ -34,7 +34,6 @@ flake8 = "^6.0.0"
 mypy = "^0.991"
 jupyterlab = "^3.5.0"
 jupyterlab-system-monitor = "^0.8.0"
-flake8-docstrings = "^1.6.0"
 ipywidgets = "^8.0.2"
 
 [build-system]

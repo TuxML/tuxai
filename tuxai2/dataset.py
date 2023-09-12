@@ -11,8 +11,8 @@ import numpy as np
 from tqdm.auto import tqdm
 from sklearn.model_selection import train_test_split
 
-from tuxai.misc import get_config, config_logger, filter_options
-from tuxai.features import Collinearity, FeatureEngineering
+from tuxai2.misc import get_config, config_logger, filter_options
+from tuxai2.features import Collinearity, FeatureEngineering
 
 LOG = logging.getLogger(__name__)
 
@@ -194,15 +194,8 @@ if __name__ == "__main__":
     config_logger()
     LOG.info("log test")
     print(Dataset(508).raw_option_list())
-    # Dataset(508).get_dataframe(add_features=True, nb_yes_range=(0, 1))
-    # Dataset(508).get_dataframe(drop_outliers=True)
 
     # precompute
-    for ver in (413, 415, 420, 500, 504, 507, 508):
+    for ver in tqdm((413, 415, 420, 500, 504, 507, 508)):
         dataset = Dataset(ver)
         dataset.get_dataframe()
-
-    # df, groups = Dataset(508).get_dataframe(return_collinear_groups=True)
-    # Dataset(508).train_test_split()
-    # print(groups)
-    dataset.filter_correlated()
