@@ -62,9 +62,12 @@ class Report:
 
     def find(
         self,
+        merge: str = "and",  # and/or
         is_top: int | None = None,
         has_version: str | float | int = None,
         has_not_version: str | float | int = None,
+        has_collinearity: bool = False,
+        has_not_kconfig: bool = False,
     ) -> dict[str, dict]:
         """Find list of options."""
         matches = dict()
@@ -89,16 +92,66 @@ class Report:
             matches["has_not_version"] = dict()
             for option, data in self._db.items():
                 if ver not in data["versions"]:
-                    matches["has_not_version"][option] = data["versions"]
+                    matches["has_not_version"][option] = list(
+                        set(self.versions()) - set(data["versions"])
+                    )
+        if has_collinearity:
+            matches["has_collinearity"] = dict()
+            for option, data in self._db.items():
+                if data["collinear"]:
+                    matches["has_collinearity"][option] = data["collinear"]
 
-        # TODO: doublons
+        if has_not_kconfig:
+            matches["has_not_kconfig"] = defaultdict(list)
+            for option, data in self._db.items():
+                for version in data["versions"]:
+                    if version not in data["kconfig"] or not data["kconfig"][version]:
+                        matches["has_not_kconfig"][option].append(version)
+            matches["has_not_kconfig"] = dict(matches["has_not_kconfig"])
+
+        # intersection
+        if merge.lower() == "and":
+            # intersection
+            options = list()
+            for key, res in matches.items():
+                options.append(set(res.keys()))
+            options = options[0].intersection(*options)
+            for key in matches.keys():
+                matches[key] = {
+                    option: data
+                    for option, data in matches[key].items()
+                    if option in options
+                }
+        # group by option
+        by_opt = defaultdict(dict)
+        for key, item in matches.items():
+            for option, data in item.items():
+                by_opt[option][key] = data
+        matches = dict(by_opt)
+
+        # else:
+        #     LOG.error(
+        #         f'invalid merge parameter: {merge} (valid parameters are "or" or "and")'
+        #     )
 
         return matches
 
-    def show(self, option: str, version: int | float | str) -> None:
+    def show(self, option: str, version: int | float | str | None = None) -> None:
         """Show available data for this option."""
-        data = self._db[option.upper()]
+        option = option.upper()
+        data = self._db[option]
+
+        if version is None:
+            print("showing all versions")
+            for version in self.versions():
+                print(f"\n< version {version} >\n")
+                self.show(option, version)
+
         version = version_str(version)
+
+        if version not in data["versions"]:
+            print(f"!!! {option} not found for version {version}")
+            return
 
         # kconfig
         if version in data["kconfig"]:
@@ -371,7 +424,10 @@ if __name__ == "__main__":
     # report = Report("db.json")
     # report.find(is_top=5)
     report = Report()
-    report.find(is_top=3, has_version=5.08, has_not_version=5.08)
+    report.find(is_top=10, has_not_kconfig=True)
+    report.find(is_top=3, has_collinearity=True, has_not_version=4.13)
+    report.find(is_top=3, has_collinearity=True)
+    report.find(is_top=3, has_version=5.08, has_not_version=5.08, has_collinearity=True)
     # report.dump_json("db.json")
     # report.load_json("db.json")
     # data = report["KASAN"]
