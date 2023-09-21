@@ -9,3 +9,4 @@ journal
 *.csv
 sandbox.py
 notebooks/sandbox.ipynb
+db.json

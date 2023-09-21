@@ -99,7 +99,9 @@ def bio2df(bio: BytesIO) -> pd.DataFrame:
 def version_str(version: int | str | float) -> str:
     """Convert version to string."""
     str_ver = str(version)
-    return f"{str_ver[0]}.{str_ver[1:]}"
+    if "." not in str_ver:
+        str_ver = f"{str_ver[0]}.{str_ver[1:]}"
+    return str_ver
 
 
 class AutoVivification(dict):

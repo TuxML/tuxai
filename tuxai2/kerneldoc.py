@@ -42,9 +42,14 @@ class KernelDoc:
                 content = kconfig_file.read()
             options = self._parse_options(content)
             for option, option_content in options.items():
-                merged_options[option][kconfig_path] = {
+                merged_options[option][
+                    str(kconfig_path.relative_to(self._src_path))
+                ] = {
                     "content": option_content,
                     "help": self._extract_help_section(option_content),
+                    "local_path": str(
+                        kconfig_path,
+                    ),
                 }
         return dict(merged_options)
 
