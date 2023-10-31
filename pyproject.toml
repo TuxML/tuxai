@@ -6,7 +6,7 @@ authors = ["None"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10,<=3.10.6"
+python = "^3.10,<3.11"
 tensorflow = "^2.11.0"
 pandas = "^1.5.2"
 matplotlib = "^3.6.2"

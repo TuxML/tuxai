@@ -3,6 +3,7 @@ from collections import defaultdict
 import logging
 import hashlib
 import json
+from typing import Literal, get_args
 
 from tqdm.auto import tqdm
 import pandas as pd
@@ -18,6 +19,14 @@ from tuxai2.models import XGBoost
 LOG = logging.getLogger(__name__)
 
 TARGETS = ("uncompressed", "compressed")
+FEATURE_IMPORTANCE_ARGS = Literal[
+    "always_important",
+    "always_very_important",
+    "never_important",
+    "sometime_important",
+    "sometime_very_important",
+    "",
+]
 
 
 class Report:
@@ -63,30 +72,49 @@ class Report:
     def find(
         self,
         merge: str = "and",  # and/or
+        target_filter: str | list[str] = TARGETS,
         is_top: int | None = None,
         has_version: str | float | int = None,
         has_not_version: str | float | int = None,
         has_collinearity: bool = False,
         has_not_kconfig: bool = False,
-    ) -> dict[str, dict]:
+        has_unbalanced_yes_no_ratio: bool = False,
+        feature_importance: FEATURE_IMPORTANCE_ARGS = "",
+        verbose: bool = False,
+    ) -> list[str] | dict[str, dict]:
         """Find list of options."""
         matches = dict()
+
+        # arguments
+        if isinstance(target_filter, str):
+            if target_filter not in TARGETS:
+                raise ValueError(target_filter)
+            target_filter = [target_filter]
+        if feature_importance not in get_args(FEATURE_IMPORTANCE_ARGS):
+            raise ValueError(feature_importance)
+
         if is_top is not None:
             matches["is_top"] = defaultdict(list)
             for option, data in self._db.items():
                 for version, targets in data["feature_importance"].items():
                     for target, rank in targets.items():
-                        if rank is not None and rank <= is_top:
+                        if (
+                            target in target_filter
+                            and rank is not None
+                            and rank <= is_top
+                        ):
                             matches["is_top"][option].append(
                                 {"version": version, "target": target, "rank": rank}
                             )
             matches["is_top"] = dict(matches["is_top"])
+
         if has_version is not None:
             ver = version_str(has_version)
             matches["has_version"] = dict()
             for option, data in self._db.items():
                 if ver in data["versions"]:
                     matches["has_version"][option] = data["versions"]
+
         if has_not_version is not None:
             ver = version_str(has_not_version)
             matches["has_not_version"] = dict()
@@ -95,6 +123,7 @@ class Report:
                     matches["has_not_version"][option] = list(
                         set(self.versions()) - set(data["versions"])
                     )
+
         if has_collinearity:
             matches["has_collinearity"] = dict()
             for option, data in self._db.items():
@@ -108,6 +137,33 @@ class Report:
                     if version not in data["kconfig"] or not data["kconfig"][version]:
                         matches["has_not_kconfig"][option].append(version)
             matches["has_not_kconfig"] = dict(matches["has_not_kconfig"])
+
+        if has_unbalanced_yes_no_ratio:
+            matches["has_unbalanced_yes_no_ratio"] = defaultdict(dict)
+            for option, data in self._db.items():
+                if "analysis" in data and "unbalanced_yes_no_ratio" in data["analysis"]:
+                    matches["has_unbalanced_yes_no_ratio"][option] = data["analysis"][
+                        "unbalanced_yes_no_ratio"
+                    ]
+            matches["has_unbalanced_yes_no_ratio"] = dict(
+                matches["has_unbalanced_yes_no_ratio"]
+            )
+
+        if feature_importance:
+            matches["feature_importance"] = defaultdict(dict)
+            for option, data in self._db.items():
+                if (
+                    "analysis" in data
+                    and "feature_importance" in data["analysis"]
+                    and feature_importance in data["analysis"]["feature_importance"]
+                ):
+                    fi = data["analysis"]["feature_importance"][feature_importance]
+                    if fid := {
+                        target: versions
+                        for target, versions in fi.items()
+                        if target in target_filter
+                    }:
+                        matches["feature_importance"][option][feature_importance] = fid
 
         # intersection
         if merge.lower() == "and":
@@ -134,7 +190,7 @@ class Report:
         #         f'invalid merge parameter: {merge} (valid parameters are "or" or "and")'
         #     )
 
-        return matches
+        return matches if verbose else list(matches.keys())
 
     def show(self, option: str, version: int | float | str | None = None) -> None:
         """Show available data for this option."""
@@ -146,6 +202,7 @@ class Report:
             for version in self.versions():
                 print(f"\n< version {version} >\n")
                 self.show(option, version)
+            return
 
         version = version_str(version)
 
@@ -183,6 +240,44 @@ class Report:
                 print(
                     f"* feature size impact ({target}): {item_diff} Mb ({item_diff_ratio}%)"
                 )
+        # feature importance
+        for target in TARGETS:
+            fi = [
+                f"{version}: {position[target]}"
+                for version, position in data["feature_importance"].items()
+            ]
+            print(f"* feature importance ranks ({target}): {', '.join(fi)}")
+
+        # yes/no ratios
+        ynr = [
+            f"{version}: (y={100*item['yes_ratio']:.2f}%/n={100*item['no_ratio']:.1f}%)"
+            for version, item in data["yes_no_ratio"].items()
+            if item
+        ]
+        print(f"* yes/no % in dataset: {', '.join(ynr)}")
+
+        # analysis
+        def _versions_by_targets(item: dict[str, list[str]]) -> str:
+            """Get displayable string."""
+            return ", ".join(
+                [
+                    f"{target}= {', '.join(versions)}"
+                    for target, versions in item.items()
+                ]
+            )
+
+        if "analysis" in data:
+            print("*** analysis ***")
+            for key, item in data["analysis"].items():
+                if key.startswith("top"):
+                    print(f"* {key}: {_versions_by_targets(item)}")
+                elif key == "feature_importance":
+                    for importance, imp_item in item.items():
+                        print(f"* {importance}: {_versions_by_targets(imp_item)}")
+                elif key == "unbalanced_yes_no_ratio":
+                    print(f"* (warning) unbalanced yes/no ratio: {', '.join(item)}")
+                else:
+                    raise ValueError(key)
 
     def _analysis(self, db: dict[str, dict]) -> dict[str, dict]:
         """Add analysis elements for each option."""
@@ -211,10 +306,63 @@ class Report:
                                 opt_an[top_n_label][target] = list()
                             opt_an[top_n_label][target].append(version)
 
-            # # feature always important
-            # for top_n in self._config["report_analysis"]["top_n_features"]:
-            #     for version, item in data["feature_importance"].items():
-            #         for target in TARGETS:
+            # feature importance
+            very_important = self._config["report_analysis"]["very_important_threshold"]
+            important = self._config["report_analysis"]["important_threshold"]
+            not_important = self._config["report_analysis"]["not_important_threshold"]
+            fi = {
+                target: {
+                    version: data["feature_importance"][version][target]
+                    for version in data["versions"]
+                    if version not in data["filtered"]
+                }
+                for target in TARGETS
+            }
+            fid = defaultdict(dict)
+            for target in TARGETS:
+                very_important_versions = [
+                    version
+                    for version, value in fi[target].items()
+                    if value is not None and value <= very_important
+                ]
+                important_versions = [
+                    version
+                    for version, value in fi[target].items()
+                    if value is not None and value <= important
+                ]
+
+                not_important_versions = [
+                    version
+                    for version, value in fi[target].items()
+                    if value is None or value >= not_important
+                ]
+                if target_fi_len := len(fi[target]):
+                    # always very important
+                    if len(very_important_versions) == target_fi_len:
+                        fid["always_very_important"][target] = very_important_versions
+                    # always important
+                    elif len(important_versions) == target_fi_len:
+                        fid["always_important"][target] = important_versions
+                    # never important
+                    if len(not_important_versions) == target_fi_len:
+                        fid["never_important"][target] = not_important_versions
+                    # sometime important
+                    if len(important_versions) > 0 and len(not_important_versions) > 0:
+                        fid["sometime_important"][target] = {
+                            "important": important_versions,
+                            "not_important": not_important_versions,
+                        }
+                    # sometime very important
+                    if (
+                        len(very_important_versions) > 0
+                        and len(not_important_versions) > 0
+                    ):
+                        fid["sometime_very_important"][target] = {
+                            "very_important": very_important_versions,
+                            "not_important": not_important_versions,
+                        }
+                if fid:
+                    opt_an["feature_importance"] = dict(fid)
 
             # save
             db[option]["analysis"] = opt_an
@@ -222,7 +370,7 @@ class Report:
 
     def _get_all_options_info(self) -> dict[str, dict]:
         """Return a dict containing all available options and informations for each option.
-        WARNING: several hours of computing expected, before using cache."""
+        WARNING: several hours of computing expected, before being able to use cache."""
         cache_key_config = str(self._config["report"]) + str(self._config["kernel"])
         cache_key = (
             f"all_options_info|{hashlib.md5(cache_key_config.encode()).hexdigest()}"
@@ -340,6 +488,7 @@ class Report:
                 res[option]["kconfig"][ver] = dict()
                 if option in kconf:
                     res[option]["kconfig"][ver] = kconf[option]
+
         res = dict(res)
         self._cache[cache_key] = res
         return res
@@ -388,8 +537,8 @@ class Report:
     def _feature_mean_size_impact(self, version: str, target: str) -> dict:
         """Kernel size impact for each option."""
         key = f"size_diffs_dict_{version}_{target}."
-        # if key in self._cache:
-        #     return self._cache[key]
+        if key in self._cache:
+            return self._cache[key]
 
         sizes = dict()
         df = Dataset(version).get_dataframe(
@@ -424,14 +573,18 @@ if __name__ == "__main__":
     # report = Report("db.json")
     # report.find(is_top=5)
     report = Report()
+    report.find(
+        feature_importance="always_very_important", target_filter="uncompressed"
+    )
+    report.find(is_top=10, has_unbalanced_yes_no_ratio=True)
     report.find(is_top=10, has_not_kconfig=True)
-    report.find(is_top=3, has_collinearity=True, has_not_version=4.13)
-    report.find(is_top=3, has_collinearity=True)
-    report.find(is_top=3, has_version=5.08, has_not_version=5.08, has_collinearity=True)
-    # report.dump_json("db.json")
+    # report.find(is_top=3, has_collinearity=True, has_not_version=4.13)
+    # report.find(is_top=3, has_collinearity=True)
+    # report.find(is_top=3, has_version=5.08, has_not_version=5.08, has_collinearity=True)
+    report.dump_json("db.json")
     # report.load_json("db.json")
     # data = report["KASAN"]
     report.show("KASAN", 4.13)
-    # report.display("CC_OPTIMIZE_FOR_SIZE", 5.08)
+    report.show("CC_OPTIMIZE_FOR_SIZE", 5.08)
     # report.versions()
     pass
