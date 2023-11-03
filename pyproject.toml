@@ -26,6 +26,7 @@ tomli = "^2.0.1"
 diskcache = "^5.4.0"
 xlsxwriter = "^3.0.3"
 cachetools = "^5.2.0"
+flask = "^3.0.0"
 
 
 [tool.poetry.group.dev.dependencies]

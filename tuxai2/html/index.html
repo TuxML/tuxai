@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+    <title>TUXAI</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static',filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="form">
+            <form action="/" method="post">
+
+                <!-- 
+                is_top=is_top,
+                top_n=top_n,
+                has_collinearity=has_collinearity,
+                has_not_kconfig=has_not_kconfig,
+                has_unbalanced_yes_no_ratio=has_unbalanced_yes_no_ratio,
+                feature_importance=feature_importance,                 -->
+                Merge:        
+                <select name="merge">
+                    <option value="and" {% if merge== "and" %}selected{% endif %}>AND</option>
+                    <option value="or" {% if merge== "or" %}selected{% endif %}>OR</option>
+                </select>
+                <br>
+                Target:
+                <select name="target_filter">
+                    <option value="both" {% if target_filter== "both" %}selected{% endif %}>compressed and compressed</option>
+                    <option value="uncompressed" {% if target_filter== "uncompressed" %}selected{% endif %}>uncompressed</option>
+                    <option value="compressed" {% if target_filter== "compressed" %}selected{% endif %}>compressed</option>            
+                </select>
+
+                <br>
+                Is Top N: 
+                <input type="checkbox" name="is_top" {% if is_top %}checked{% endif %}>
+                <input type="number" name="top_n" step="1" min="1" value="{{top_n}}">
+                <br>
+                
+                Has versions (multi)
+                <select name="has_versions" multiple>
+                    {% for version in versions %}
+                    <option value="{{version}}" {% if version in has_version %} selected{% endif %}>{{version}}</option>
+                    {% endfor %}
+                </select>
+                <br>
+                Has not versions (multi)
+                <select name="has_not_versions" multiple>
+                    {% for version in versions %}
+                    <option value="{{version}}" {% if version in has_not_version %} selected{% endif %}>{{version}}</option>
+                    {% endfor %}
+                </select>
+                <br>
+                Has colinearity
+                <input type="checkbox" name="has_colinearity" {% if has_colinearity %}checked{% endif %}>
+                <br> 
+                Has not kconfig
+                <input type="checkbox" name="has_not_kconfig" {% if has_not_kconfig %}checked{% endif %}>
+                <br>       
+                Has unbalanced yes/no ratio
+                <input type="checkbox" name="has_unbalanced_yes_no_ratio" {% if has_unbalanced_yes_no_ratio %}checked{% endif %}>
+                <br>
+                
+                Feature importance
+                <select name="feature_importance">
+                    {% for fi_arg in fi_args %}
+                        <option value="{{fi_arg}}" {% if fi_arg == feature_importance %} selected{% endif %}>{{fi_arg}}</option>
+                    {% endfor %}
+                </select>    
+                
+                
+
+
+                <br>
+
+                <input type="submit" value="Rechercher">
+            </form>
+        </div>
+    
+
+        <div class="result">
+
+            {% if result %}
+                <h2>Résultats :</h2>
+                <ul>
+                    {% for key, value in result.items() %}
+                        <li>{{ key }} : {{ value }}</li>
+                    {% endfor %}
+                </ul>
+
+            {% endif %}  
+        </div>
+    </div>
+</body>
+</html>

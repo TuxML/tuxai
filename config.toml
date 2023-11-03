@@ -52,7 +52,8 @@
     very_important_threshold = 10
     not_important_threshold = 1000
 
-
+[web]
+    json = "db.json" # from workdir if path is relative
 
 [log]
     path = "/data/tuxai/logs/log.txt"

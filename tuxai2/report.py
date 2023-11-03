@@ -74,8 +74,8 @@ class Report:
         merge: str = "and",  # and/or
         target_filter: str | list[str] = TARGETS,
         is_top: int | None = None,
-        has_version: str | float | int = None,
-        has_not_version: str | float | int = None,
+        has_version: str | float | int | list[str | float | int] = None,
+        has_not_version: str | float | int | list[str | float | int] = None,
         has_collinearity: bool = False,
         has_not_kconfig: bool = False,
         has_unbalanced_yes_no_ratio: bool = False,
@@ -109,17 +109,21 @@ class Report:
             matches["is_top"] = dict(matches["is_top"])
 
         if has_version is not None:
-            ver = version_str(has_version)
+            if not isinstance(has_version, (list, tuple)):
+                has_version = [has_version]
+            vers = [version_str(ver) for ver in has_version]
             matches["has_version"] = dict()
             for option, data in self._db.items():
-                if ver in data["versions"]:
+                if set(vers).issubset(set(data["versions"])):
                     matches["has_version"][option] = data["versions"]
 
         if has_not_version is not None:
-            ver = version_str(has_not_version)
+            if not isinstance(has_not_version, (list, tuple)):
+                has_not_version = [has_not_version]
+            vers = [version_str(ver) for ver in has_not_version]
             matches["has_not_version"] = dict()
             for option, data in self._db.items():
-                if ver not in data["versions"]:
+                if not set(vers).issubset(set(data["versions"])):
                     matches["has_not_version"][option] = list(
                         set(self.versions()) - set(data["versions"])
                     )
