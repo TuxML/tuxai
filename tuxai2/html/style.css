@@ -78,3 +78,13 @@ li {
 .results {
     text-align: right;
 }
+
+.toggle {
+    cursor: pointer;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.details {
+    display: none;
+}

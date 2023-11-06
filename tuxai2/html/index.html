@@ -4,6 +4,7 @@
 <head>
     <title>TUXAI</title>
     <link rel="stylesheet" type="text/css" href="{{ url_for('static',filename='style.css') }}">
+    <script src="{{ url_for('static',filename='script.js') }}"></script>
 </head>
 <body>
     <div class="container">
@@ -67,9 +68,6 @@
                     {% endfor %}
                 </select>    
                 
-                
-
-
                 <br>
 
                 <input type="submit" value="Rechercher">
@@ -80,14 +78,27 @@
         <div class="result">
 
             {% if result %}
-                <h2>Résultats :</h2>
+                <h2>Results :</h2>
                 <ul>
-                    {% for key, value in result.items() %}
-                        <li>{{ key }} : {{ value }}</li>
-                    {% endfor %}
-                </ul>
+                {% for key, value in result.items() %}
+                    <li>
+                        
+                        <div class="toggle" onclick="toggleDetail('{{ key }}')">
+                            {{ key }}
+                            <a href="{{ url_for('show', option=key) }}" target="_blank">
+                                <button>All data (new window)</button>
+                            </a>
+                        </div>
+                        <div id="{{ key }}_details" class="details" style="display:none;">
+                            <pre>{{ value | tojson(indent=4) }}</pre>
+                        </div>
 
-            {% endif %}  
+                    </li>
+                {% endfor %}
+                </ul>                    
+            {% else %}
+                <b>No matches</b>
+            {% endif %} 
         </div>
     </div>
 </body>

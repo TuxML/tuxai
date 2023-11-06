@@ -1,10 +1,10 @@
 import logging
 from typing import get_args
-from pathlib import Path
-from flask import Flask, request, render_template
 
-from tuxai2.report import Report, TARGETS, FEATURE_IMPORTANCE_ARGS
-from tuxai2.misc import get_config, config_logger, version_str
+from flask import Flask, render_template, request
+
+from tuxai2.misc import config_logger, get_config, version_str
+from tuxai2.report import FEATURE_IMPORTANCE_ARGS, TARGETS, Report
 
 LOG = logging.getLogger(__name__)
 
@@ -18,7 +18,6 @@ def index():
     versions = sorted(
         [version_str(version) for version in config["report"]["versions"]]
     )
-    # fi_args = [fi_arg for fi_arg in get_args(FEATURE_IMPORTANCE_ARGS) if fi_arg != ""]
     fi_args = get_args(FEATURE_IMPORTANCE_ARGS)
     if request.method == "POST":
         target_filter = request.form.get("target_filter", "both")
@@ -92,6 +91,13 @@ def index():
         has_unbalanced_yes_no_ratio=False,
         feature_importance="",
     )
+
+
+@app.route("/<option>")
+def show(option):
+    config = get_config()
+    report = Report(json_path=config["web"]["json"])
+    return report.info(option, html=True)
 
 
 if __name__ == "__main__":

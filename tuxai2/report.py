@@ -170,24 +170,25 @@ class Report:
                         matches["feature_importance"][option][feature_importance] = fid
 
         # intersection
-        if merge.lower() == "and":
-            # intersection
-            options = list()
-            for key, res in matches.items():
-                options.append(set(res.keys()))
-            options = options[0].intersection(*options)
-            for key in matches.keys():
-                matches[key] = {
-                    option: data
-                    for option, data in matches[key].items()
-                    if option in options
-                }
-        # group by option
-        by_opt = defaultdict(dict)
-        for key, item in matches.items():
-            for option, data in item.items():
-                by_opt[option][key] = data
-        matches = dict(by_opt)
+        if len(matches) > 0:
+            if merge.lower() == "and":
+                # intersection
+                options = list()
+                for key, res in matches.items():
+                    options.append(set(res.keys()))
+                options = options[0].intersection(*options)
+                for key in matches.keys():
+                    matches[key] = {
+                        option: data
+                        for option, data in matches[key].items()
+                        if option in options
+                    }
+            # group by option
+            by_opt = defaultdict(dict)
+            for key, item in matches.items():
+                for option, data in item.items():
+                    by_opt[option][key] = data
+            matches = dict(by_opt)
 
         # else:
         #     LOG.error(
@@ -197,60 +198,118 @@ class Report:
         return matches if verbose else list(matches.keys())
 
     def show(self, option: str, version: int | float | str | None = None) -> None:
+        print(self.info(option, version, html=False))
+
+    def info(
+        self, option: str, version: int | float | str | None = None, html: bool = False
+    ) -> str:
         """Show available data for this option."""
         option = option.upper()
         data = self._db[option]
+        output = list()
 
         if version is None:
-            print("showing all versions")
+            if html:
+                output.append("<h1>Showing all versions</h1>")
+            else:
+                output.append("showing all versions")
             for version in self.versions():
-                print(f"\n< version {version} >\n")
-                self.show(option, version)
-            return
+                if html:
+                    output.append(f"<h2>version {version}</h2>")
+                else:
+                    output.append(f"\n< version {version} >\n")
+
+                output.append(self.info(option, version, html=html))
+            if html:
+                return "<br>".join(output)
+            return "\n".join(output)
 
         version = version_str(version)
 
         if version not in data["versions"]:
-            print(f"!!! {option} not found for version {version}")
-            return
+            if html:
+                return f'<p style="color:#FF0000">!!! {option} not found for version {version}</p>'
+            else:
+                return f"!!! {option} not found for version {version}"
 
         # kconfig
         if version in data["kconfig"]:
             data["kconfig"][version]
-            print("* kconfig(s) found:\n")
-            for path, item in data["kconfig"][version].items():
-                print(f"\t[{path}]")
-                content = item["content"].split("\n")
-                content = "\t" + "\n\t".join(content)
-                print(content)
-                print("\n")
+            if html:
+                output.append("<p><b>* kconfig(s) found:</b></p>")
+            else:
+                output.append("* kconfig(s) found:\n")
+            if len(data["kconfig"][version]) > 0:
+                for path, item in data["kconfig"][version].items():
+                    if html:
+                        output.append(f"<i>[{path}]</i>")
+                        content = item["content"].split("\n")
+                        content = f"<blockquote>{'<br>'.join(content)}</blockquote>"
+                        output.append(content + "<br>")
+                    else:
+                        output.append(f"\t[{path}]")
+                        content = item["content"].split("\n")
+                        content = "\t" + "\n\t".join(content)
+                        output.append(content + "\n")
+            else:
+                if html:
+                    output.append('<p style="color:#FF0000">No file found</p>')
+                else:
+                    output.append("(No file found)\n")
+
         # versions
         if data["versions"]:
-            print(f"* found in version(s): {', '.join(data['versions'])}")
+            versions_list = ", ".join(data["versions"])
+            if html:
+                output.append(f"<p><b>* found in version(s):</b> {versions_list}</p>")
+            else:
+                output.append(f"* found in version(s): {versions_list}")
         if data["filtered"]:
-            print(f"* filtered in version(s): {', '.join(data['filtered'])}")
+            versions_list = ", ".join(data["filtered"])
+            if html:
+                output.append(
+                    f"<p><b>* filtered in version(s):</b> {versions_list}</p>"
+                )
+            else:
+                output.append(f"* filtered in version(s): {versions_list}")
 
         # collinearity
         if version in data["collinear"]:
-            print(f'* collinearity with: {", ".join(data["collinear"][version])}')
+            version_list = ", ".join(data["collinear"][version])
+            if html:
+                output.append(f"<p><b>* collinearity with:</b> {version_list}</p>")
+            else:
+                output.append(f"* collinearity with: {version_list}")
 
         # feature size impact
         for target in TARGETS:
             if target in data["feature_size_impact"][version]:
                 item = data["feature_size_impact"][version][target]
-                item_diff_sign = "+" if item["diff"] > 0 else ""
-                item_diff = f'{item_diff_sign}{item["diff"]:.2f}'
-                item_diff_ratio = f'{100 * item["diff_ratio"]:.2f}'
-                print(
-                    f"* feature size impact ({target}): {item_diff} Mb ({item_diff_ratio}%)"
-                )
+                if "diff" in item:
+                    item_diff_sign = "+" if item["diff"] > 0 else ""
+                    item_diff = f'{item_diff_sign}{item["diff"]:.2f}'
+                    item_diff_ratio = f'{100 * item["diff_ratio"]:.2f}'
+                    if html:
+                        output.append(
+                            f"<p><b>* feature size impact (<i>{target}</i>):</b>"
+                            f" {item_diff} Mb ({item_diff_ratio}%)</p>"
+                        )
+                    else:
+                        output.append(
+                            f"* feature size impact ({target}): {item_diff} Mb ({item_diff_ratio}%)"
+                        )
         # feature importance
         for target in TARGETS:
             fi = [
                 f"{version}: {position[target]}"
                 for version, position in data["feature_importance"].items()
             ]
-            print(f"* feature importance ranks ({target}): {', '.join(fi)}")
+            if html:
+                output.append(
+                    f"<p><b>* feature importance ranks (<i>{target}</i>):</b> {', '.join(fi)}</p>"
+                )
+            else:
+                output.append(f"* feature importance ranks ({target}): {', '.join(fi)}")
 
         # yes/no ratios
         ynr = [
@@ -258,7 +317,10 @@ class Report:
             for version, item in data["yes_no_ratio"].items()
             if item
         ]
-        print(f"* yes/no % in dataset: {', '.join(ynr)}")
+        if html:
+            output.append(f"<p><b>* yes/no % in dataset:</b> {', '.join(ynr)}</p>")
+        else:
+            output.append(f"* yes/no % in dataset: {', '.join(ynr)}")
 
         # analysis
         def _versions_by_targets(item: dict[str, list[str]]) -> str:
@@ -271,17 +333,42 @@ class Report:
             )
 
         if "analysis" in data:
-            print("*** analysis ***")
+            if html:
+                output.append("<h3> analysis </h3>")
+            else:
+                output.append("*** analysis ***")
             for key, item in data["analysis"].items():
                 if key.startswith("top"):
-                    print(f"* {key}: {_versions_by_targets(item)}")
+                    if html:
+                        output.append(
+                            f"<p><b>* {key}:</b> {_versions_by_targets(item)}</p>"
+                        )
+                    else:
+                        output.append(f"* {key}: {_versions_by_targets(item)}")
                 elif key == "feature_importance":
                     for importance, imp_item in item.items():
-                        print(f"* {importance}: {_versions_by_targets(imp_item)}")
+                        if html:
+                            output.append(
+                                f"<p><b>* {importance}:</b> {_versions_by_targets(imp_item)}</p>"
+                            )
+                        else:
+                            output.append(
+                                f"* {importance}: {_versions_by_targets(imp_item)}"
+                            )
                 elif key == "unbalanced_yes_no_ratio":
-                    print(f"* (warning) unbalanced yes/no ratio: {', '.join(item)}")
+                    if html:
+                        output.append(
+                            f"<p><b>* (warning) unbalanced yes/no ratio:</b> {', '.join(item)}</p>"
+                        )
+                    else:
+                        output.append(
+                            f"* (warning) unbalanced yes/no ratio: {', '.join(item)}"
+                        )
                 else:
                     raise ValueError(key)
+        if html:
+            return "".join(output)
+        return "\n".join(output)
 
     def _analysis(self, db: dict[str, dict]) -> dict[str, dict]:
         """Add analysis elements for each option."""
@@ -577,6 +664,7 @@ if __name__ == "__main__":
     # report = Report("db.json")
     # report.find(is_top=5)
     report = Report()
+    report.dump_json("db.json")
     report.find(
         feature_importance="always_very_important", target_filter="uncompressed"
     )
