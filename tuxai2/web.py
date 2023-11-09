@@ -12,6 +12,13 @@ LOG = logging.getLogger(__name__)
 app = Flask(__name__, template_folder="html", static_folder="html")
 
 
+@app.route("/help/<option>/<version>")
+def help_option(option, version):
+    config = get_config()
+    report = Report(json_path=config["web"]["json"])
+    return report.option_help(option, version)
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     config = get_config()

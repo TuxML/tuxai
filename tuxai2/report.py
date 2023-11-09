@@ -200,6 +200,95 @@ class Report:
     def show(self, option: str, version: int | float | str | None = None) -> None:
         print(self.info(option, version, html=False))
 
+    def option_help(self, option: str, version: int | float | str) -> dict:
+        """Get Help string for this version of the option."""
+        version = version_str(version)
+        option = option.upper()
+
+        if option not in self._db:
+            return {"error": f"option not found: {option}"}
+
+        data = self._db[option]
+        new_help = ""
+        # feature size impact
+        if version not in data["filtered"]:
+            fi = data["feature_size_impact"][version]["uncompressed"]
+            add_word = "adds" if fi["diff"] >= 0 else "removes"
+            sign = "+" if fi["diff"] >= 0 else "-"
+            new_help += (
+                f'In average, this option {add_word} {abs(fi["diff"]):.2f} Mb to kernel'
+                + f' ({sign}{100* fi["diff_ratio"]:.2f} % from {fi["no"]:.2f} Mb to {fi["yes"]:.2f} Mb).'
+            )
+            if "analysis" in data:
+                analysis = data["analysis"]
+                top = False
+                # top
+                for key, item in analysis.items():
+                    if key.startswith("top"):
+                        ktop = int(key.split(" ")[1])
+                        if (
+                            "uncompressed" in item
+                            and version in item["uncompressed"]
+                            and (not top or ktop < top)
+                        ):
+                            top = ktop
+                if top:
+                    new_help += f" This option is in the top {top} for this version."
+
+                # comp with other versions
+                fid = analysis["feature_importance"]
+                tested_versions = sorted(set(data["versions"]) - set(data["filtered"]))
+                tested_versions_str = f"Tested versions ({', '.join(tested_versions)})"
+                new_help_len = len(new_help)
+
+                def _has_fi(fi_name: str) -> bool:
+                    """Get wether option have feature importance for this versions."""
+                    # always, never
+                    if fi_name.startswith("always") or fi_name.startswith("never"):
+                        return fi_name in fid and "uncompressed" in fid[fi_name]
+                    # sometime
+                    return fi_name in fid and "uncompressed" in fid[fi_name]
+
+                if _has_fi("always_very_important"):
+                    new_help += f" {tested_versions_str} always play a very important role in kernel size."
+                elif _has_fi("always_important"):
+                    new_help += f" {tested_versions_str} always play an important role in kernel size."
+                elif _has_fi("never_important"):
+                    new_help += f" {tested_versions_str} never play an important role in kernel size."
+                elif _has_fi("sometime_very_important"):
+                    imp = " / ".join(
+                        [
+                            f'{key.replace(" ", "")}: {", ".join(versions)}'
+                            for key, versions in fid["sometime_very_important"][
+                                "uncompressed"
+                            ].items()
+                        ]
+                    )
+                    new_help += f" {tested_versions_str} sometime play a very important role in kernel size ({imp})"
+                elif _has_fi("sometime_important"):
+                    imp = " / ".join(
+                        [
+                            f'{key.replace(" ", "")}: {", ".join(versions)}'
+                            for key, versions in fid["sometime_important"][
+                                "uncompressed"
+                            ].items()
+                        ]
+                    )
+                    new_help += f" {tested_versions_str} sometime play an important role in kernel size ({imp})"
+                if len(new_help) > new_help_len:
+                    if (
+                        "unbalanced_yes_no_ratio" in analysis
+                        and version in analysis["unbalanced_yes_no_ratio"]
+                    ):
+                        ynr = data["yes_no_ratio"][version]
+                        yes_no_ratio_str = f"yes: {100* ynr['yes_ratio']:.2f} %, no: {100* ynr['no_ratio']:.2f} %"
+                        new_help += f" But this version was tested with unbalanced yes/no ratio ({yes_no_ratio_str})"
+
+        return {
+            "current": data["kconfig"][version] if version in data["kconfig"] else {},
+            "new_help": new_help,
+        }
+
     def info(
         self, option: str, version: int | float | str | None = None, html: bool = False
     ) -> str:
@@ -660,11 +749,15 @@ class Report:
 
 if __name__ == "__main__":
     config_logger()
+    # report = Report()
+    report = Report("db.json")
+    report.option_help("ARCNET_COM20020_CS", 413)
 
-    # report = Report("db.json")
+    # report.option_help("KASAN", 413)
+    report.option_help("CC_OPTIMIZE_FOR_SIZE", 413)
     # report.find(is_top=5)
     report = Report()
-    report.dump_json("db.json")
+    # report.dump_json("db.json")
     report.find(
         feature_importance="always_very_important", target_filter="uncompressed"
     )
@@ -673,7 +766,7 @@ if __name__ == "__main__":
     # report.find(is_top=3, has_collinearity=True, has_not_version=4.13)
     # report.find(is_top=3, has_collinearity=True)
     # report.find(is_top=3, has_version=5.08, has_not_version=5.08, has_collinearity=True)
-    report.dump_json("db.json")
+    # report.dump_json("db.json")
     # report.load_json("db.json")
     # data = report["KASAN"]
     report.show("KASAN", 4.13)
