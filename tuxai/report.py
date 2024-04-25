@@ -235,9 +235,9 @@ class BasicReport:
                             if sgroup in group_corr:
                                 option = group_corr[sgroup]
                             else:
-                                option = group_corr[
-                                    sgroup
-                                ] = f"{CORR_PREFIX}{corr_count:04}"
+                                option = group_corr[sgroup] = (
+                                    f"{CORR_PREFIX}{corr_count:04}"
+                                )
 
                         options_ranks[option].append(rank)
                         # is_col_str = f" [{idx}] ({option})" if len(group) > 1 else ""
@@ -301,9 +301,11 @@ class BasicReport:
                 }
                 df_res["option"] = df_res.index
                 df_res["group"] = df_res.option.apply(
-                    lambda option: (", ".join(inv_group_corr[option]))
-                    if option in inv_group_corr
-                    else ""
+                    lambda option: (
+                        (", ".join(inv_group_corr[option]))
+                        if option in inv_group_corr
+                        else ""
+                    )
                 )
                 df_res = df_res.drop(columns=["option"])
 

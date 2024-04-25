@@ -29,9 +29,11 @@ DEFAULT_XGBOOST_PARAMS = {
 class XGBoost:
     """Extreme Gradient Boosting."""
 
+    _cache_version = "_2_"
+
     def __init__(
         self,
-        dataframe: pd.DataFrame,
+        dataframe: pd.DataFrame | None = None,
         test_size: float = 0.2,
         use_cache: bool = True,
         target: str = "vmlinux",
@@ -43,52 +45,47 @@ class XGBoost:
         n_estimators: int = 100,
         eval_metric: str = "mape",
         version="",
-        collinear_options: dict | None = None
+        collinear_options: dict | None = None,
+        load_model: str | Path | None = None
         # **kwargs,
     ) -> None:
         """Remaining parameters are sent to model constructor."""
-        self._dataframe = dataframe
-        self._test_size = test_size
+
         self._target = target
-        self._parameters = {
-            "alpha": alpha,
-            "gamma": gamma,
-            "lambda": lambda_,
-            "max_depth": max_depth,
-            "learning_rate": learning_rate,
-            "n_estimators": n_estimators,
-            "eval_metric": eval_metric,
-        }
 
-        self.X_train, self.y_train, self.X_test, self.y_test = self._train_test_split()
-        self._version = version
-        self._test_size = test_size
-        self._collinear_options = collinear_options
-
-        self._is_trained = False
-        self._cache = cache() if use_cache else None
-
-        self._xgb_reg = xgb.XGBRegressor(random_state=2022, **self._parameters)
-        self._signature = self._get_signature()
-
-    def _train_test_split(self):
-        """Train/Test datasets."""
-        options = filter_options(self._dataframe.columns)
-        if self._test_size > 0:
-            df_train, df_test = train_test_split(
-                self._dataframe, test_size=self._test_size, random_state=2022
-            )
-            X_test = df_test[options]
-            y_test = df_test[self._target]
+        if load_model:
+            self._loaded_model_path = Path(load_model).expanduser().resolve()
+            self._xgb_reg = self._load(load_model)
+            self._is_trained = True
         else:
-            df_train = self._dataframe
-            X_test = None
-            y_test = None
+            assert (
+                dataframe is not None
+            ), "A dataframe is needed since no model is provided."
+            self._parameters = {
+                "alpha": alpha,
+                "gamma": gamma,
+                "lambda": lambda_,
+                "max_depth": max_depth,
+                "learning_rate": learning_rate,
+                "n_estimators": n_estimators,
+                "eval_metric": eval_metric,
+            }
+            self._dataframe = dataframe
+            self._test_size = test_size
+            self._xgb_reg = xgb.XGBRegressor(random_state=2022, **self._parameters)
+            self._is_trained = False
+            (
+                self.X_train,
+                self.y_train,
+                self.X_test,
+                self.y_test,
+            ) = self._train_test_split()
+            self._version = version
+            self._test_size = test_size
+            self._collinear_options = collinear_options
 
-        X_train = df_train[options]
-        y_train = df_train[self._target]
-
-        return X_train, y_train, X_test, y_test
+            self._signature = self._get_signature()
+            self._cache = cache() if use_cache else None
 
     def fit(self) -> None:
         """Train model."""
@@ -96,30 +93,32 @@ class XGBoost:
             LOG.debug("model already trained.")
             return
         if self._cache:
-            if self._load():
+            if self._load_from_cache():
                 self._is_trained = True
                 return
 
         LOG.info(f"training model {self._signature}")
 
         # fit with sorted options (/ pred)
-        self._xgb_reg.fit(
-            self.X_train.reindex(sorted(self.X_train.columns), axis=1), self.y_train
-        )
+
+        # X_train = self.X_train.reindex(sorted(self.X_train.columns), axis=1).values
+        X_train = self.X_train.reindex(sorted(self.X_train.columns), axis=1)
+        self._xgb_reg.fit(X_train, self.y_train)
+
         self._is_trained = True
         LOG.debug("model trained")
         if self._cache:
-            self._save()
+            self._save_to_cache()
 
-    def pred(self) -> list:
+    def pred(self, x: pd.DataFrame | None = None) -> list:
         """Get y_pred."""
         LOG.debug("make prediction.")
         # predict with sorted options (/ fit) -> mandatory after loading model from cache
-        return list(
-            self._xgb_reg.predict(
-                self.X_test.reindex(sorted(self.X_test.columns), axis=1)
-            )
-        )
+        X = self.X_test if x is None else x
+        # X = X.reindex(sorted(X.columns), axis=1).values
+        X = X.reindex(sorted(X.columns), axis=1)
+        # x_test = xgb.DMatrix(x_test.reindex(sorted(x_test.columns), axis=1).values)
+        return list(self._xgb_reg.predict(X))
 
     def options_scores(
         self,
@@ -168,6 +167,38 @@ class XGBoost:
             else {k: v for k, v in df_scores.to_dict().items() if k != "index"}
         )
 
+    def save(self, json_path: Path | str) -> None:
+        """Write file."""
+        path = Path(json_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._xgb_reg.save_model(path)
+
+    @staticmethod
+    def _load(json_path: Path | str) -> None:
+        """Load existing model."""
+        xgb_reg = xgb.Booster()
+        xgb_reg.load_model(json_path)
+        return xgb_reg
+
+    def _train_test_split(self):
+        """Train/Test datasets."""
+        options = filter_options(self._dataframe.columns)
+        if self._test_size > 0:
+            df_train, df_test = train_test_split(
+                self._dataframe, test_size=self._test_size, random_state=2022
+            )
+            X_test = df_test[options]
+            y_test = df_test[self._target]
+        else:
+            df_train = self._dataframe
+            X_test = None
+            y_test = None
+
+        X_train = df_train[options]
+        y_train = df_train[self._target]
+
+        return X_train, y_train, X_test, y_test
+
     def _get_signature(self) -> str:
         """Get model signature (training data + parameters)."""
         LOG.debug("computing model signature...")
@@ -179,17 +210,24 @@ class XGBoost:
             for key in sorted(self._parameters.keys())
         )
         # X_train.describe().to_string() is not stable enough for a key,
-        # so, we just take columns and hope for the best...
+        # so, we just take columns names and sums and hope for the best...
         data = (
             ", ".join(sorted(self.X_train.columns))
+            + ", ".join(
+                str(int(s))
+                for s in self.X_train[sorted(self.X_train.columns)].sum(axis=0)
+            )
             + self.y_train.describe().to_string()
+            + str(len(self.y_train))
         )
-
-        signature = f"xgboost({self._version})|{hashlib.md5((param + data + hyper_param).encode()).hexdigest()}"
+        sig_str = self._cache_version + param + data + hyper_param
+        signature = (
+            f"xgboost({self._version})|{hashlib.md5(sig_str.encode()).hexdigest()}"
+        )
         LOG.debug(f"model signature : {signature}")
         return signature
 
-    def _save(self) -> None:
+    def _save_to_cache(self) -> None:
         """Serialize model in cache."""
         # create temporary file, read content and store in cache
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -198,7 +236,7 @@ class XGBoost:
             self._xgb_reg.save_model(json_path)
             self._cache[self._signature] = json_path.read_text()
 
-    def _load(self) -> bool:
+    def _load_from_cache(self) -> bool:
         """Load model from cache."""
         with tempfile.TemporaryDirectory() as temp_dir:
             if found := self._signature in self._cache:
@@ -216,6 +254,6 @@ if __name__ == "__main__":
 
     config_logger()
     dataset = Dataset(415)
-    model = XGBoost(dataset, target="LZ4-vmlinux", group_collinear_options=True)
+    model = XGBoost(dataset.get_dataframe(group_collinear_options=False))
     model.fit()
-    model.options_scores(corr_only=True, corr_groups=True)
+    # model.options_scores(corr_only=True, corr_groups=True)

@@ -43,6 +43,7 @@
     all_targets = ["vmlinux", "GZIP", "BZIP2", "LZMA", "XZ", "LZO", "LZ4"]
     compressed_target = "XZ-vmlinux" # since compressed targets are correlated
     uncompressed_target = "vmlinux"
+    feature_limit = -1  # No limit
     
 
 [report_analysis]
